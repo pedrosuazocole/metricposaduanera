@@ -2031,9 +2031,9 @@ body{font-size:12px;padding:16px;background:#fff}
 </div>
 <div class="words"><strong>Son: L</strong> ${moneyToWords(total)}</div>
 <div class="sar">
-  <div><strong>C.A.I.:</strong> <span class="cai-val">${b.cai||''}</span></div>
-  <div>Rango Autorizado ${b.rango_ini||''} a la ${b.rango_fin||''}</div>
-  <div>Fecha Límite de Emisión <strong>${fD(b.fecha_limite||'')}</strong></div>
+  <div><strong>C.A.I.:</strong> <span class="cai-val">${sale.serieCai || b.cai || ''}</span></div>
+  <div>Rango Autorizado ${sale.serieRangoIni || b.rango_ini || ''} a la ${sale.serieRangoFin || b.rango_fin || ''}</div>
+  <div>Fecha Límite de Emisión <strong>${fD(sale.serieFechaLimite || b.fecha_limite || '')}</strong></div>
   <div class="copies">ORIGINAL: CLIENTE &nbsp;&nbsp;&nbsp; COPIA: OBLIGADO TRIBUTARIO EMISOR</div>
   <div class="exija">La Factura es Beneficio de Todos EXÍJALA!!!</div>
 </div>
@@ -2121,6 +2121,7 @@ let facFormaPago = 'efectivo';
 let facMontoRecibido = 0;
 let facSelClientId = null;
 let facOrdenCompra = '';
+let facSeriesCache = []; // Cache de series tipo factura con su CAI/rango propios
 let facConstancia = '';
 let facSAG = '';
 
@@ -2165,6 +2166,7 @@ async function renderFacturacion() {
   if (seriesSel) {
     try {
       const series = await GET("/series_factura", `sucursal_id=${USER.sucursal_id}&tipo=factura`);
+      facSeriesCache = series || [];
       if (series && series.length > 0) {
         seriesSel.innerHTML = series.map(s =>
           `<option value="${s.id}">${s.nombre || s.serie} — ${s.serie}</option>`
@@ -2177,6 +2179,7 @@ async function renderFacturacion() {
         seriesSel.previousElementSibling && (seriesSel.previousElementSibling.style.display = 'none');
       }
     } catch(e) {
+      facSeriesCache = [];
       seriesSel.innerHTML = '<option value="">— Serie por defecto —</option>';
     }
   }
@@ -2503,6 +2506,9 @@ async function processFacInvoice() {
       turno_id: turnoActivoCajero?.id || null, serie_id: facSerieId
     });
 
+    // Buscar los datos del CAI/rango de la serie de Factura seleccionada
+    const facSerieDatos = facSeriesCache.find(s => s.id === facSerieId) || {};
+
     // Siempre imprime en carta
     const saleForPrint = {
       id: r.id, numero_factura: r.numero_factura, fecha: nowHN(),
@@ -2516,6 +2522,11 @@ async function processFacInvoice() {
       aduanaDocTransporte: facAduanaDocTransporte,
       aduanaValorCIF:      facAduanaValorCIF,
       aduanaNumContenedor: facAduanaNumContenedor,
+      // CAI/rango propios de la serie de Factura seleccionada
+      serieCai:         facSerieDatos.cai          || '',
+      serieRangoIni:    facSerieDatos.rango_ini     || '',
+      serieRangoFin:    facSerieDatos.rango_fin      || '',
+      serieFechaLimite: facSerieDatos.fecha_limite   || '',
     };
     printInvoice(saleForPrint);  // v7: ahora muestra selector de formato (ticket/carta)
 
@@ -2549,6 +2560,7 @@ let ndAduanaPoliza = '';
 let ndAduanaDocTransporte = '';
 let ndAduanaValorCIF = '';
 let ndAduanaNumContenedor = '';
+let ndSeriesCache = []; // Cache de series tipo nota_debito con su CAI/rango propios
 
 /** Modal de datos aduaneros para Notas de Débito */
 function ndAbrirAduanaModal() {
@@ -2583,6 +2595,7 @@ async function renderNotaDebito() {
   if (ndSerieSel) {
     try {
       const series = await GET('/series_factura', `sucursal_id=${USER.sucursal_id}&tipo=nota_debito`);
+      ndSeriesCache = series || [];
       if (series && series.length > 0) {
         ndSerieSel.innerHTML = series.map(s =>
           `<option value="${s.id}">${s.nombre || s.serie} — ${s.serie}</option>`
@@ -2592,6 +2605,7 @@ async function renderNotaDebito() {
         ndSerieSel.innerHTML = '<option value="">— Configurar serie ND en Configuración —</option>';
       }
     } catch(e) {
+      ndSeriesCache = [];
       ndSerieSel.innerHTML = '<option value="">— Serie por defecto —</option>';
     }
   }
@@ -2798,6 +2812,18 @@ async function processNdInvoice() {
   const cl = clients_cache.find(c => c.id == clId);
   if (!cl) { alert('Seleccioná un cliente.'); return; }
 
+  // Validar que haya una serie de ND seleccionada y que tenga CAI configurado
+  const ndSerieIdCheck = document.getElementById('nd-serie-id')?.value || null;
+  if (!ndSerieIdCheck) {
+    alert('⚠️ No hay una serie de Nota de Débito seleccionada.\nVe a Configuración → Series de Nota de Débito y crea una con su CAI del SAR.');
+    return;
+  }
+  const serieSeleccionada = ndSeriesCache.find(s => s.id === ndSerieIdCheck);
+  if (!serieSeleccionada || !serieSeleccionada.cai) {
+    alert('⚠️ La serie seleccionada no tiene CAI configurado.\nVe a Configuración → Series de Nota de Débito y completá el CAI, rango y fecha límite del SAR.');
+    return;
+  }
+
   const subtotal = ndCart.reduce((s, i) => s + i.precio * i.cantidad, 0);
   let discAmt = ndDiscountType === 'porcentaje' ? subtotal * ndDiscount / 100 : ndDiscount;
   discAmt = Math.min(discAmt, subtotal);
@@ -2834,6 +2860,9 @@ async function processNdInvoice() {
       turno_id: turnoActivoCajero?.id || null, serie_id: ndSerieId
     });
 
+    // Buscar los datos del CAI/rango de la serie ND seleccionada (no de la sucursal)
+    const ndSerieDatos = ndSeriesCache.find(s => s.id === ndSerieId) || {};
+
     const saleForPrint = {
       id: r.id, numero_factura: r.numero_factura, fecha: nowHN(),
       cliente: cl, items: ndCart.map(i=>({...i})),
@@ -2846,6 +2875,11 @@ async function processNdInvoice() {
       aduanaDocTransporte: ndAduanaDocTransporte,
       aduanaValorCIF:      ndAduanaValorCIF,
       aduanaNumContenedor: ndAduanaNumContenedor,
+      // CAI/rango propios de la serie de Nota de Débito seleccionada
+      serieCai:         ndSerieDatos.cai         || '',
+      serieRangoIni:    ndSerieDatos.rango_ini   || '',
+      serieRangoFin:    ndSerieDatos.rango_fin   || '',
+      serieFechaLimite: ndSerieDatos.fecha_limite|| '',
     };
 
     printNotaDebito(saleForPrint);
@@ -2996,9 +3030,9 @@ body{font-size:12px;padding:16px;background:#fff}
 </div>
 <div class="words"><strong>Son: L</strong> ${moneyToWords(total)}</div>
 <div class="sar">
-  <div><strong>C.A.I.:</strong> <span class="cai-val">${b.cai||''}</span></div>
-  <div>Rango Autorizado ${b.rango_ini||''} a la ${b.rango_fin||''}</div>
-  <div>Fecha Límite de Emisión <strong>${fD(b.fecha_limite||'')}</strong></div>
+  <div><strong>C.A.I.:</strong> <span class="cai-val">${sale.serieCai||''}</span></div>
+  <div>Rango Autorizado ${sale.serieRangoIni||''} a la ${sale.serieRangoFin||''}</div>
+  <div>Fecha Límite de Emisión <strong>${fD(sale.serieFechaLimite||'')}</strong></div>
   <div class="copies">ORIGINAL: CLIENTE &nbsp;&nbsp;&nbsp; COPIA: OBLIGADO TRIBUTARIO EMISOR</div>
   <div class="exija">La Nota de Débito es Beneficio de Todos EXÍJALA!!!</div>
 </div>
@@ -3644,6 +3678,78 @@ async function renderReports() {
   const hfEl = document.getElementById('rep-hora-fin');
   if (hiEl && !hiEl.value) hiEl.value = '00:00:00';
   if (hfEl && !hfEl.value) hfEl.value = '23:59:59';
+}
+
+// ─── REIMPRESIÓN DE FACTURAS / NOTAS DE DÉBITO ───────────────────────────────
+let reimpresionTipoActual = 'factura'; // 'factura' | 'nota_debito'
+
+function abrirReimpresion(tipo) {
+  reimpresionTipoActual = tipo;
+  const esND = tipo === 'nota_debito';
+  document.getElementById('reimpresion-modal-title').textContent =
+    esND ? '🔁 Reimpresión de Notas de Débito' : '🔁 Reimpresión de Facturas';
+  document.getElementById('reimpresion-modal-subtitle').textContent =
+    `Buscá la ${esND?'Nota de Débito':'factura'} por número completo o parcial.`;
+  document.getElementById('reimpresion-numero').value = '';
+  document.getElementById('reimpresion-resultados').innerHTML = '';
+  openModal('reimpresion-modal');
+  setTimeout(() => document.getElementById('reimpresion-numero')?.focus(), 150);
+}
+
+async function buscarReimpresion() {
+  const numero = document.getElementById('reimpresion-numero')?.value?.trim();
+  const cont = document.getElementById('reimpresion-resultados');
+  if (!numero) { cont.innerHTML = '<div style="color:#dc2626;font-size:13px;padding:10px">Ingresá un número de documento.</div>'; return; }
+  cont.innerHTML = '<div style="color:#94a3b8;font-size:13px;padding:10px">Buscando...</div>';
+  try {
+    const resultados = await GET('/ventas/buscar_reimpresion', `numero=${encodeURIComponent(numero)}&tipo=${reimpresionTipoActual}`);
+    if (!resultados || resultados.length === 0) {
+      cont.innerHTML = '<div style="color:#94a3b8;font-size:13px;padding:10px">No se encontraron documentos con ese número.</div>';
+      return;
+    }
+    const colorAccent = reimpresionTipoActual === 'nota_debito' ? '#7c3aed' : '#2563eb';
+    cont.innerHTML = resultados.map(v => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:8px;background:#fff">
+        <div>
+          <div style="font-family:monospace;font-weight:700;color:${colorAccent};font-size:13px">${v.numero_factura}</div>
+          <div style="font-size:12px;color:#475569;margin-top:2px">${v.cliente.nombre} ${v.cliente.rtn?'· RTN '+v.cliente.rtn:''}</div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:1px">${new Date(v.fecha).toLocaleDateString('es-HN')} · Total: L. ${(v.total||0).toFixed(2)}</div>
+        </div>
+        <button class="btn-primary" style="background:${colorAccent};white-space:nowrap" onclick='reimprimirVenta(${JSON.stringify(v).replace(/'/g,"&apos;")})'>🖨️ Reimprimir</button>
+      </div>`).join('');
+  } catch(e) {
+    cont.innerHTML = `<div style="color:#dc2626;font-size:13px;padding:10px">Error al buscar: ${e.message}</div>`;
+  }
+}
+
+function reimprimirVenta(v) {
+  // Reconstruye el objeto "sale" esperado por printCarta / printNotaDebito
+  const sale = {
+    numero_factura: v.numero_factura,
+    fecha: v.fecha,
+    cliente: v.cliente,
+    items: (v.items||[]).map(i => ({
+      codigo: i.codigo, nombre: i.nombre, categoria: i.categoria,
+      cantidad: i.cantidad, precio: i.precio, gravado: i.gravado
+    })),
+    importeGravado: v.importe_gravado||0,
+    isv: v.isv15||0, isv18: v.isv18||0,
+    descuento: v.descuento||0, total: v.total||0,
+    exonerado: !!v.exonerado,
+    ordenCompraExenta: v.orden_compra_exenta||'',
+    constanciaRegistro: v.constancia_registro||'',
+    identificativoSAG: v.identificativo_sag||'',
+    // Datos aduaneros no se conservan en la tabla ventas; se imprimen vacíos en la reimpresión
+    aduanaPoliza: '', aduanaDocTransporte: '', aduanaValorCIF: '', aduanaNumContenedor: '',
+    // CAI/rango propios de la serie original del documento
+    serieCai: v.serieCai||'', serieRangoIni: v.serieRangoIni||'',
+    serieRangoFin: v.serieRangoFin||'', serieFechaLimite: v.serieFechaLimite||'',
+  };
+  if (v.serieTipo === 'nota_debito' || reimpresionTipoActual === 'nota_debito') {
+    printNotaDebito(sale);
+  } else {
+    printCarta(sale);
+  }
 }
 
 // ─── CxP cache ────────────────────────────────────────────────────────────

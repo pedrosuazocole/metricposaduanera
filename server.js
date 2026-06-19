@@ -708,6 +708,52 @@ app.get('/api/ventas',auth(),(req,res)=>{
   res.json(all(sql,params));
 });
 app.get('/api/ventas/:id/items',auth(),(req,res)=>res.json(all(`SELECT * FROM venta_items WHERE venta_id=?`,[req.params.id])));
+
+// ── BUSCAR VENTA PARA REIMPRESIÓN (Factura o Nota de Débito) ────────────────
+// Busca por número de factura exacto o parcial, devuelve todo lo necesario
+// para reconstruir e imprimir el documento (items, cliente, serie/CAI propio).
+app.get('/api/ventas/buscar_reimpresion',auth(),(req,res)=>{
+  const suc = req.user.sucursal_id;
+  const { numero, tipo } = req.query; // tipo: 'factura' | 'nota_debito' | vacío=todas
+  if(!numero || !numero.trim()) return res.status(400).json({error:'Debe indicar un número de documento'});
+
+  let sql = `SELECT v.*, c.nombre as cliente_nombre, c.rtn as cliente_rtn
+             FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id
+             WHERE v.sucursal_id=? AND v.numero_factura LIKE ?`;
+  const params = [suc, '%'+numero.trim()+'%'];
+
+  // Si se especifica tipo, filtrar por el tipo de la serie asociada
+  if (tipo) {
+    sql += ` AND v.serie_id IN (SELECT id FROM series_factura WHERE tipo=?)`;
+    params.push(tipo);
+  }
+  sql += ` ORDER BY v.fecha DESC LIMIT 30`;
+
+  const ventas = all(sql, params);
+  const resultado = ventas.map(v => {
+    const items = all(`SELECT * FROM venta_items WHERE venta_id=?`,[v.id]);
+    let serieDatos = {};
+    if (v.serie_id) {
+      serieDatos = get(`SELECT cai,rango_ini,rango_fin,fecha_limite,tipo,nombre,serie FROM series_factura WHERE id=?`,[v.serie_id]) || {};
+    }
+    return {
+      ...v,
+      cliente: { nombre: v.cliente_nombre||'Consumidor Final', rtn: v.cliente_rtn||'' },
+      items: items.map(i => ({
+        codigo: i.producto_codigo, nombre: i.producto_nombre, categoria: i.producto_categoria,
+        cantidad: i.cantidad, precio: i.precio_unit,
+        // Se infiere si el ítem es gravado: si la venta tiene ISV y este item no fue marcado como exento explícitamente
+        gravado: (v.isv15>0 || v.isv18>0) ? 1 : 0
+      })),
+      serieCai: serieDatos.cai || '',
+      serieRangoIni: serieDatos.rango_ini || '',
+      serieRangoFin: serieDatos.rango_fin || '',
+      serieFechaLimite: serieDatos.fecha_limite || '',
+      serieTipo: serieDatos.tipo || 'factura',
+    };
+  });
+  res.json(resultado);
+});
 app.post('/api/ventas',auth(),(req,res)=>{
   const{cliente_id,items,subtotal,descuento,importe_gravado,importe_exento,importe_exonerado,isv15,isv18,total,exonerado,orden_compra_exenta,constancia_registro,identificativo_sag,forma_pago,monto_recibido,cambio,turno_id,banco_id,serie_id}=req.body;
   const suc=req.user.sucursal_id;

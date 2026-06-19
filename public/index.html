@@ -807,42 +807,6 @@
     </form>
   </div>
 </div>
-<!-- MODAL DATOS ADUANEROS — Nota de Débito -->
-<div class="modal-overlay" id="nd-aduana-modal" style="z-index:10001">
-  <div class="modal" style="max-width:480px">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
-      <div style="width:42px;height:42px;background:#f5f3ff;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">📋</div>
-      <div>
-        <div class="modal-title" style="margin-bottom:2px;color:#7c3aed">Datos Aduaneros — Nota de Débito</div>
-        <div style="font-size:12px;color:#64748b">Completá los datos para esta Nota de Débito</div>
-      </div>
-    </div>
-    <form class="modal-form" id="nd-aduana-form" onsubmit="return false">
-      <div class="form-grid">
-        <div class="form-field">
-          <label>Número de Póliza</label>
-          <input type="text" id="nd-aduana-poliza" placeholder="Ej: número de póliza" autocomplete="off">
-        </div>
-        <div class="form-field">
-          <label>Documento de Transporte</label>
-          <input type="text" id="nd-aduana-doc-transporte" placeholder="Ej: BL, AWB, CMR..." autocomplete="off">
-        </div>
-        <div class="form-field">
-          <label>Valor C.I.F.</label>
-          <input type="text" id="nd-aduana-valor-cif" placeholder="Ej: monto CIF" autocomplete="off">
-        </div>
-        <div class="form-field">
-          <label>Número de Contenedor</label>
-          <input type="text" id="nd-aduana-num-contenedor" placeholder="Ej: CSQU3054383" autocomplete="off">
-        </div>
-      </div>
-      <div class="modal-actions" style="margin-top:8px">
-        <button type="button" class="btn-cancel" onclick="ndCerrarAduanaModal()">Omitir</button>
-        <button type="button" class="btn-confirm" onclick="ndConfirmarAduanaModal()" style="background:#7c3aed">✅ Confirmar y Continuar</button>
-      </div>
-    </form>
-  </div>
-</div>
 <!-- MODAL PRINT — vista previa e impresión directa, solo formato Carta/Aduanero -->
 <div class="modal-overlay" id="print-modal">
   <div class="modal" style="max-width:360px">

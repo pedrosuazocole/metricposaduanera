@@ -2556,30 +2556,7 @@ let ndSelClientId = null;
 let ndOrdenCompra = '';
 let ndConstancia = '';
 let ndSAG = '';
-let ndAduanaPoliza = '';
-let ndAduanaDocTransporte = '';
-let ndAduanaValorCIF = '';
-let ndAduanaNumContenedor = '';
 let ndSeriesCache = []; // Cache de series tipo nota_debito con su CAI/rango propios
-
-/** Modal de datos aduaneros para Notas de Débito */
-function ndAbrirAduanaModal() {
-  document.getElementById('nd-aduana-poliza').value          = ndAduanaPoliza;
-  document.getElementById('nd-aduana-doc-transporte').value  = ndAduanaDocTransporte;
-  document.getElementById('nd-aduana-valor-cif').value       = ndAduanaValorCIF;
-  document.getElementById('nd-aduana-num-contenedor').value  = ndAduanaNumContenedor;
-  document.getElementById('nd-aduana-modal').style.display   = 'flex';
-}
-function ndCerrarAduanaModal() {
-  document.getElementById('nd-aduana-modal').style.display = 'none';
-}
-function ndConfirmarAduanaModal() {
-  ndAduanaPoliza         = (document.getElementById('nd-aduana-poliza').value         || '').trim();
-  ndAduanaDocTransporte  = (document.getElementById('nd-aduana-doc-transporte').value  || '').trim();
-  ndAduanaValorCIF       = (document.getElementById('nd-aduana-valor-cif').value       || '').trim();
-  ndAduanaNumContenedor  = (document.getElementById('nd-aduana-num-contenedor').value  || '').trim();
-  ndCerrarAduanaModal();
-}
 
 async function renderNotaDebito() {
   try {
@@ -2634,8 +2611,6 @@ async function renderNotaDebito() {
   _on('nd-sag',           'input',  e => { ndSAG         = e.target.value; });
   _on('nd-client',        'change', e => { ndSelClientId = e.target.value; ndRenderClientSelect(); });
   _on('nd-btn-invoice',   'click',  processNdInvoice);
-
-  setTimeout(() => ndAbrirAduanaModal(), 100);
 }
 
 function ndRenderProductGrid() {
@@ -2862,8 +2837,6 @@ async function processNdInvoice() {
 
     // Usar la serie ya validada arriba (serieSeleccionada) — evita una segunda
     // búsqueda que podría fallar por timing o por referencia de array distinta.
-    console.log('[ND DEBUG] ndSerieId:', ndSerieId, '| serieSeleccionada:', serieSeleccionada);
-
     const saleForPrint = {
       id: r.id, numero_factura: r.numero_factura, fecha: nowHN(),
       cliente: cl, items: ndCart.map(i=>({...i})),
@@ -2871,11 +2844,6 @@ async function processNdInvoice() {
       isv: isv15, isv18, total: afterDisc, exonerado: ndExonerado,
       formaPago: ndFormaPago, montoRecibido: recibido, cambio,
       ordenCompraExenta: ndOrdenCompra, constanciaRegistro: ndConstancia, identificativoSAG: ndSAG,
-      // Datos aduaneros
-      aduanaPoliza:        ndAduanaPoliza,
-      aduanaDocTransporte: ndAduanaDocTransporte,
-      aduanaValorCIF:      ndAduanaValorCIF,
-      aduanaNumContenedor: ndAduanaNumContenedor,
       // CAI/rango propios de la serie de Nota de Débito seleccionada
       serieCai:         serieSeleccionada.cai          || '',
       serieRangoIni:    serieSeleccionada.rango_ini     || '',
@@ -2883,20 +2851,12 @@ async function processNdInvoice() {
       serieFechaLimite: serieSeleccionada.fecha_limite   || '',
     };
 
-    console.log('[ND DEBUG] saleForPrint CAI fields:', {
-      serieCai: saleForPrint.serieCai,
-      serieRangoIni: saleForPrint.serieRangoIni,
-      serieRangoFin: saleForPrint.serieRangoFin,
-      serieFechaLimite: saleForPrint.serieFechaLimite
-    });
-
     printNotaDebito(saleForPrint);
 
     // Reset
     ndCart = []; ndDiscount = 0; ndExonerado = false;
     ndFormaPago = 'efectivo'; ndMontoRecibido = 0;
     ndOrdenCompra = ''; ndConstancia = ''; ndSAG = '';
-    ndAduanaPoliza = ''; ndAduanaDocTransporte = ''; ndAduanaValorCIF = ''; ndAduanaNumContenedor = '';
     document.getElementById('nd-discount').value = '';
     document.getElementById('nd-exonerado').checked = false;
     ndRenderCart();
@@ -2912,12 +2872,6 @@ function printNotaDebito(sale) {
   const logoSrc = b.logo || '';
   const fecha = new Date(sale.fecha);
   const fechaStr = fecha.toLocaleDateString('es-HN',{day:'2-digit',month:'2-digit',year:'numeric'});
-
-  const poliza        = sale.aduanaPoliza        || '';
-  const docTransporte = sale.aduanaDocTransporte || '';
-  const valorCIF      = sale.aduanaValorCIF      || '';
-  const numContenedor = sale.aduanaNumContenedor || '';
-  const tienePoliza = poliza || docTransporte || valorCIF || numContenedor;
 
   let importeExentoCalc = 0;
   const itemsHTML = sale.items.map(i => {
@@ -2962,10 +2916,6 @@ body{font-size:12px;padding:18px;background:#fff;color:#1a1a1a}
 .client-row{display:flex;gap:32px;margin-bottom:12px;flex-wrap:wrap}
 .cl-label{font-size:10px;font-weight:700;text-transform:uppercase;color:#555}
 .cl-val{font-size:12px;color:#1a1a1a;margin-top:1px}
-.intro{font-size:11px;color:#333;margin-bottom:10px}
-.poliza-row{font-size:11px;color:#333;margin-bottom:14px;display:flex;gap:28px;flex-wrap:wrap}
-.poliza-row span.lbl{font-weight:400}
-.poliza-line{border-bottom:1px solid #999;display:inline-block;min-width:90px;padding-bottom:1px}
 .items-table{width:100%;border-collapse:collapse;margin-bottom:18px}
 .items-table thead th{border-bottom:2px solid #7c3aed;border-top:1px solid #7c3aed;padding:7px 10px;font-size:11px;font-weight:700;text-align:left;color:#1a1a1a;background:#f5f3ff}
 .items-table thead th.r{text-align:right}.items-table thead th.c{text-align:center}
@@ -3006,15 +2956,6 @@ body{font-size:12px;padding:18px;background:#fff;color:#1a1a1a}
   <div><div class="cl-label">Fecha</div><div class="cl-val">${fechaStr}</div></div>
   <div><div class="cl-label">R.T.N.:</div><div class="cl-val">${sale.cliente?.rtn||'—'}</div></div>
 </div>
-
-${tienePoliza ? `
-<div class="intro">Hemos Cargado a su apreciable cuenta por registro, peso, trámite, despacho, y pago de impuesto de:</div>
-<div class="poliza-row">
-  <div><span class="lbl">Número de Póliza:</span> <span class="poliza-line">${poliza}</span></div>
-  <div><span class="lbl">Documento de Transporte:</span> <span class="poliza-line">${docTransporte}</span></div>
-  <div><span class="lbl">Valor C.I.F:</span> <span class="poliza-line">${valorCIF}</span></div>
-  ${numContenedor?`<div><span class="lbl">Número de Contenedor:</span> <span class="poliza-line">${numContenedor}</span></div>`:''}
-</div>` : ''}
 
 <table class="items-table">
 <thead><tr>

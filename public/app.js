@@ -2674,6 +2674,11 @@ function ndAddToCart(prodId) {
   ndRenderCart();
 }
 
+function ndUpdatePrecio(id, nuevoPrecio) {
+  const i = ndCart.findIndex(x => x.id === id);
+  if (i >= 0) { ndCart[i].precio = Math.max(0, nuevoPrecio); ndRenderCart(); }
+}
+
 function ndRemoveFromCart(id) { ndCart = ndCart.filter(i => i.id !== id); ndRenderCart(); }
 
 function ndChangeQty(id, delta) {
@@ -2720,7 +2725,16 @@ function ndRenderCart() {
           <span style="font-size:13px;font-weight:700;min-width:20px;text-align:center">${i.cantidad}</span>
           <button onclick="ndChangeQty('${i.id}',1)"  style="width:22px;height:22px;border:1px solid #ede9fe;border-radius:4px;background:#f5f3ff;cursor:pointer;font-size:13px;font-weight:700;color:#7c3aed;display:flex;align-items:center;justify-content:center">+</button>
         </div>
-        <div style="font-size:13px;font-weight:700;color:#7c3aed">L. ${(i.precio*i.cantidad).toFixed(2)}</div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+          <div style="display:flex;align-items:center;gap:3px">
+            <span style="font-size:10px;color:#94a3b8">L.</span>
+            <input type="number" step="0.01" min="0"
+              value="${i.precio.toFixed(2)}"
+              onchange="ndUpdatePrecio('${i.id}',parseFloat(this.value)||0)"
+              style="width:68px;text-align:right;border:1px solid #ede9fe;border-radius:5px;padding:2px 5px;font-size:12px;font-weight:700;color:#7c3aed;outline:none">
+          </div>
+          <span style="font-size:13px;font-weight:700;color:#7c3aed">L. ${(i.precio*i.cantidad).toFixed(2)}</span>
+        </div>
       </div>
     </div>`).join('');
 

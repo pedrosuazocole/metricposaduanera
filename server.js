@@ -129,7 +129,27 @@ app.get('/api/reset-db', (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
-app.use(express.static(path.join(__dirname, 'public')));
+// ── Cache-busting: versión única generada en cada arranque del servidor ──────
+// Cada vez que Railway redespliega, el proceso reinicia y esta constante cambia,
+// forzando a TODOS los navegadores a descargar app.js fresco (no desde caché).
+const APP_BUILD_VERSION = Date.now().toString();
+
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
+
+// Servir index.html inyectando la versión de build en la URL de app.js
+app.get('/', (req, res) => {
+  try {
+    let html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+    html = html.replace(
+      /<script\s+src="\/?app\.js"><\/script>/,
+      `<script src="/app.js?v=${APP_BUILD_VERSION}"></script>`
+    );
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.send(html);
+  } catch(e) {
+    res.status(500).send('Error cargando la aplicación: ' + e.message);
+  }
+});
 
 let db; let SQL;
 
@@ -1893,7 +1913,9 @@ app.post('/api/productos/importar_excel',auth(['admin','supervisor']),(req,res)=
   for(const p of productos){
     try{
       const{codigo,nombre,categoria,precio_venta,costo,gravado}=p;
-      if(!codigo||!nombre||!precio_venta)continue;
+      // Precio en 0 es válido (ej: servicios cuyo precio se define al facturar).
+      // Solo se descarta la fila si falta código o nombre.
+      if(!codigo||!nombre){ errores.push({codigo:codigo||'(sin código)',error:'Falta código o nombre'}); continue; }
       const exist=get(`SELECT id FROM productos WHERE codigo=?`,[codigo]);
       if(exist){
         run(`UPDATE productos SET nombre=?,categoria=?,precio_venta=?,costo=?,gravado=? WHERE id=?`,[nombre,categoria||'General',parseFloat(precio_venta)||0,parseFloat(costo)||0,gravado!==false&&gravado!=='0'?1:0,exist.id]);

@@ -3191,7 +3191,7 @@ function mostrarPreviewProductos(rows) {
   prev.innerHTML = '<div style="font-weight:700;color:#475569;margin-bottom:6px">Vista previa (' + rows.length + ' registros):</div>' +
     muestra.map((r,i) =>
       '<div style="padding:4px 0;border-bottom:1px solid #e2e8f0;font-size:11px">' +
-      (i+1) + '. <b>Código:</b> ' + (r.codigo||'—') + ' | <b>Nombre:</b> ' + (r.nombre||'—') + ' | <b>Precio:</b> ' + (r.precio_venta||'—') +
+      (i+1) + '. <b>Código:</b> ' + (r.codigo||'—') + ' | <b>Nombre:</b> ' + (r.nombre||'—') + ' | <b>Precio:</b> L. ' + (parseFloat(r.precio_venta)||0).toFixed(2) +
       '</div>'
     ).join('') +
     (rows.length>5 ? '<div style="color:#94a3b8;font-size:11px;margin-top:4px">...y ' + (rows.length-5) + ' más</div>' : '');

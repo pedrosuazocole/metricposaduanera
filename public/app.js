@@ -3708,26 +3708,37 @@ function abrirReimpresion(tipo) {
   document.getElementById('reimpresion-modal-title').textContent =
     esND ? '🔁 Reimpresión de Notas de Débito' : '🔁 Reimpresión de Facturas';
   document.getElementById('reimpresion-modal-subtitle').textContent =
-    `Buscá la ${esND?'Nota de Débito':'factura'} por número completo o parcial.`;
+    `Buscá la ${esND?'Nota de Débito':'factura'} por número, o dejá el número en blanco para ver todas las del rango de fechas.`;
   document.getElementById('reimpresion-numero').value = '';
+  // Precargar el rango de fechas con el día de hoy
+  const hoy = todayHN();
+  document.getElementById('reimpresion-fecha-ini').value = hoy;
+  document.getElementById('reimpresion-fecha-fin').value = hoy;
   document.getElementById('reimpresion-resultados').innerHTML = '';
   openModal('reimpresion-modal');
-  setTimeout(() => document.getElementById('reimpresion-numero')?.focus(), 150);
+  // Buscar automáticamente los documentos del día al abrir
+  buscarReimpresion();
 }
 
 async function buscarReimpresion() {
-  const numero = document.getElementById('reimpresion-numero')?.value?.trim();
+  const numero = document.getElementById('reimpresion-numero')?.value?.trim() || '';
+  const fechaIni = document.getElementById('reimpresion-fecha-ini')?.value || '';
+  const fechaFin = document.getElementById('reimpresion-fecha-fin')?.value || '';
   const cont = document.getElementById('reimpresion-resultados');
-  if (!numero) { cont.innerHTML = '<div style="color:#dc2626;font-size:13px;padding:10px">Ingresá un número de documento.</div>'; return; }
   cont.innerHTML = '<div style="color:#94a3b8;font-size:13px;padding:10px">Buscando...</div>';
   try {
-    const resultados = await GET('/ventas/buscar_reimpresion', `numero=${encodeURIComponent(numero)}&tipo=${reimpresionTipoActual}`);
+    let qs = `tipo=${reimpresionTipoActual}`;
+    if (numero)   qs += `&numero=${encodeURIComponent(numero)}`;
+    if (fechaIni) qs += `&fecha_ini=${fechaIni}`;
+    if (fechaFin) qs += `&fecha_fin=${fechaFin}`;
+    const resultados = await GET('/ventas/buscar_reimpresion', qs);
     if (!resultados || resultados.length === 0) {
-      cont.innerHTML = '<div style="color:#94a3b8;font-size:13px;padding:10px">No se encontraron documentos con ese número.</div>';
+      cont.innerHTML = '<div style="color:#94a3b8;font-size:13px;padding:10px">No se encontraron documentos con esos filtros.</div>';
       return;
     }
     const colorAccent = reimpresionTipoActual === 'nota_debito' ? '#7c3aed' : '#2563eb';
-    cont.innerHTML = resultados.map(v => `
+    cont.innerHTML = `<div style="font-size:11px;color:#94a3b8;margin-bottom:8px">${resultados.length} documento(s) encontrado(s)</div>` +
+      resultados.map(v => `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:8px;background:#fff">
         <div>
           <div style="font-family:monospace;font-weight:700;color:${colorAccent};font-size:13px">${v.numero_factura}</div>

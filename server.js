@@ -714,20 +714,30 @@ app.get('/api/ventas/:id/items',auth(),(req,res)=>res.json(all(`SELECT * FROM ve
 // para reconstruir e imprimir el documento (items, cliente, serie/CAI propio).
 app.get('/api/ventas/buscar_reimpresion',auth(),(req,res)=>{
   const suc = req.user.sucursal_id;
-  const { numero, tipo } = req.query; // tipo: 'factura' | 'nota_debito' | vacío=todas
-  if(!numero || !numero.trim()) return res.status(400).json({error:'Debe indicar un número de documento'});
+  const { numero, tipo, fecha_ini, fecha_fin } = req.query; // tipo: 'factura' | 'nota_debito' | vacío=todas
+  const numeroLimpio = (numero||'').trim();
+  if (!numeroLimpio && !fecha_ini && !fecha_fin) {
+    return res.status(400).json({error:'Debe indicar un número de documento o un rango de fechas'});
+  }
 
   let sql = `SELECT v.*, c.nombre as cliente_nombre, c.rtn as cliente_rtn
              FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id
-             WHERE v.sucursal_id=? AND v.numero_factura LIKE ?`;
-  const params = [suc, '%'+numero.trim()+'%'];
+             WHERE v.sucursal_id=?`;
+  const params = [suc];
+
+  if (numeroLimpio) {
+    sql += ` AND v.numero_factura LIKE ?`;
+    params.push('%'+numeroLimpio+'%');
+  }
+  if (fecha_ini) { sql += ` AND date(v.fecha)>=?`; params.push(fecha_ini); }
+  if (fecha_fin) { sql += ` AND date(v.fecha)<=?`; params.push(fecha_fin); }
 
   // Si se especifica tipo, filtrar por el tipo de la serie asociada
   if (tipo) {
     sql += ` AND v.serie_id IN (SELECT id FROM series_factura WHERE tipo=?)`;
     params.push(tipo);
   }
-  sql += ` ORDER BY v.fecha DESC LIMIT 30`;
+  sql += ` ORDER BY v.fecha DESC LIMIT 100`;
 
   const ventas = all(sql, params);
   const resultado = ventas.map(v => {

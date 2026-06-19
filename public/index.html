@@ -1138,10 +1138,18 @@
   <div class="modal" style="max-width:640px">
     <div class="modal-title" id="reimpresion-modal-title">Reimpresión de Documento</div>
     <div style="font-size:13px;color:#64748b;margin-bottom:14px" id="reimpresion-modal-subtitle">
-      Buscá por número completo o parcial (ej: 00017084 o 000-02-01).
+      Buscá por número completo o parcial, o filtrá por fecha. Dejá el número en blanco para ver todos los documentos del rango.
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <label style="font-size:12px;color:#64748b;display:flex;align-items:center;gap:5px">Desde
+        <input type="date" id="reimpresion-fecha-ini" style="border:1px solid #e2e8f0;border-radius:8px;padding:7px 9px;font-size:12px;outline:none">
+      </label>
+      <label style="font-size:12px;color:#64748b;display:flex;align-items:center;gap:5px">Hasta
+        <input type="date" id="reimpresion-fecha-fin" style="border:1px solid #e2e8f0;border-radius:8px;padding:7px 9px;font-size:12px;outline:none">
+      </label>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:14px">
-      <input type="text" id="reimpresion-numero" placeholder="Número de documento..."
+      <input type="text" id="reimpresion-numero" placeholder="Número de documento (opcional)..."
         style="flex:1;border:1px solid #e2e8f0;border-radius:8px;padding:9px 12px;font-size:13px;outline:none;font-family:monospace"
         onkeydown="if(event.key==='Enter') buscarReimpresion()">
       <button class="btn-primary" onclick="buscarReimpresion()">🔎 Buscar</button>

@@ -2639,14 +2639,14 @@ function ndRenderProductGrid() {
   if (q && resultsBox && resultsBody) {
     resultsBox.style.display = 'block';
     resultsBody.innerHTML = prods.slice(0, 50).map(p => `
-      <tr style="border-bottom:1px solid #f1f5f9;cursor:pointer" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''" onclick="ndAddToCart(${p.id})">
+      <tr style="border-bottom:1px solid #f1f5f9;cursor:pointer" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''" onclick="ndAddToCart('${p.id}')">
         <td style="padding:8px 12px;font-size:12px;font-family:monospace">${p.codigo||'—'}</td>
         <td style="padding:8px 12px;font-size:13px;font-weight:600;color:#1e3a5f">${p.nombre}</td>
         <td style="padding:8px 12px;font-size:12px;color:#64748b">${p.categoria||'—'}</td>
         <td style="padding:8px 12px;font-size:13px;font-weight:700;text-align:right">L. ${(p.precio_venta||0).toFixed(2)}</td>
         <td style="padding:8px 12px;text-align:center"><span style="font-size:11px;padding:2px 7px;border-radius:10px;background:${p.gravado?'#eff6ff':'#f0fdf4'};color:${p.gravado?'#2563eb':'#16a34a'}">${p.gravado?'15%':'0%'}</span></td>
         <td style="padding:8px 12px;text-align:center;font-size:12px">${p.stock||0}</td>
-        <td style="padding:8px 12px;text-align:center"><button onclick="event.stopPropagation();ndAddToCart(${p.id})" style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer;font-weight:600">+</button></td>
+        <td style="padding:8px 12px;text-align:center"><button onclick="event.stopPropagation();ndAddToCart('${p.id}')" style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer;font-weight:600">+</button></td>
       </tr>`).join('');
   } else if (resultsBox) {
     resultsBox.style.display = 'none';
@@ -2654,7 +2654,7 @@ function ndRenderProductGrid() {
 
   if (grid) {
     grid.innerHTML = prods.slice(0, 60).map(p => `
-      <div onclick="ndAddToCart(${p.id})" style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px;cursor:pointer;transition:all .15s" onmouseover="this.style.borderColor='#7c3aed';this.style.boxShadow='0 2px 8px rgba(124,58,237,.15)'" onmouseout="this.style.borderColor='#e2e8f0';this.style.boxShadow='none'">
+      <div onclick="ndAddToCart('${p.id}')" style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px;cursor:pointer;transition:all .15s" onmouseover="this.style.borderColor='#7c3aed';this.style.boxShadow='0 2px 8px rgba(124,58,237,.15)'" onmouseout="this.style.borderColor='#e2e8f0';this.style.boxShadow='none'">
         <div style="font-size:13px;font-weight:700;color:#1e3a5f;margin-bottom:4px;line-height:1.3">${p.nombre}</div>
         <div style="font-size:11px;color:#94a3b8;margin-bottom:8px">${p.categoria||''}</div>
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -2712,13 +2712,13 @@ function ndRenderCart() {
     <div style="background:#faf8ff;border:1px solid #ede9fe;border-radius:8px;padding:8px 10px;margin-bottom:6px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px">
         <div style="font-size:12px;font-weight:600;color:#1e3a5f;flex:1;line-height:1.3">${i.nombre}</div>
-        <button onclick="ndRemoveFromCart(${i.id})" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;padding:0;flex-shrink:0">✕</button>
+        <button onclick="ndRemoveFromCart('${i.id}')" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;padding:0;flex-shrink:0">✕</button>
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
         <div style="display:flex;align-items:center;gap:6px">
-          <button onclick="ndChangeQty(${i.id},-1)" style="width:22px;height:22px;border:1px solid #ede9fe;border-radius:4px;background:#f5f3ff;cursor:pointer;font-size:13px;font-weight:700;color:#7c3aed;display:flex;align-items:center;justify-content:center">−</button>
+          <button onclick="ndChangeQty('${i.id}',-1)" style="width:22px;height:22px;border:1px solid #ede9fe;border-radius:4px;background:#f5f3ff;cursor:pointer;font-size:13px;font-weight:700;color:#7c3aed;display:flex;align-items:center;justify-content:center">−</button>
           <span style="font-size:13px;font-weight:700;min-width:20px;text-align:center">${i.cantidad}</span>
-          <button onclick="ndChangeQty(${i.id},1)"  style="width:22px;height:22px;border:1px solid #ede9fe;border-radius:4px;background:#f5f3ff;cursor:pointer;font-size:13px;font-weight:700;color:#7c3aed;display:flex;align-items:center;justify-content:center">+</button>
+          <button onclick="ndChangeQty('${i.id}',1)"  style="width:22px;height:22px;border:1px solid #ede9fe;border-radius:4px;background:#f5f3ff;cursor:pointer;font-size:13px;font-weight:700;color:#7c3aed;display:flex;align-items:center;justify-content:center">+</button>
         </div>
         <div style="font-size:13px;font-weight:700;color:#7c3aed">L. ${(i.precio*i.cantidad).toFixed(2)}</div>
       </div>

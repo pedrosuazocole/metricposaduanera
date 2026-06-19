@@ -1,0 +1,87 @@
+============================================================
+  METRIC POS v7.3 — Inversiones Buenos Aires
+  Instalación y uso LOCAL (Windows)
+============================================================
+
+REQUISITOS
+----------
+- Node.js v18 o superior
+  Descargar en: https://nodejs.org (versión LTS)
+- Windows 7/10/11
+
+------------------------------------------------------------
+INSTALACIÓN PRIMERA VEZ
+------------------------------------------------------------
+
+1. Descomprime el ZIP en una carpeta, por ejemplo:
+   C:\MetricPOS\metricposbuenosaires\
+
+2. Abre CMD o PowerShell dentro de esa carpeta y ejecuta:
+   npm install
+
+3. (Opcional) Edita el archivo .env para personalizar:
+   - PORT        → Puerto del servidor (default: 3000)
+   - JWT_SECRET  → Clave secreta (cámbiala)
+   - SERVER_URL  → URL para links de PDF en WhatsApp
+
+------------------------------------------------------------
+INICIAR EL SISTEMA
+------------------------------------------------------------
+
+Opción A — Doble clic en INICIAR.bat
+  (Instala dependencias automáticamente la primera vez)
+
+Opción B — Desde CMD:
+  node server.js
+
+Luego abre el navegador en:
+  http://localhost:3000
+
+------------------------------------------------------------
+CREDENCIALES POR DEFECTO
+------------------------------------------------------------
+  Usuario:    admin
+  Contraseña: admin123
+
+  ¡Cámbiala en Usuarios después del primer acceso!
+
+------------------------------------------------------------
+MANTENER CORRIENDO EN SEGUNDO PLANO (PM2)
+------------------------------------------------------------
+
+Instalar PM2 (una sola vez):
+  npm install -g pm2
+
+Iniciar con PM2:
+  npm run pm2
+
+Otros comandos útiles:
+  npm run pm2:stop      → Detener
+  npm run pm2:restart   → Reiniciar
+  npm run pm2:logs      → Ver registros
+
+Auto-inicio con Windows:
+  pm2 startup
+  pm2 save
+
+------------------------------------------------------------
+ARCHIVOS IMPORTANTES
+------------------------------------------------------------
+  server.js        → Servidor principal
+  public/          → Interfaz web (HTML/CSS/JS)
+  data/metricpos.db → Base de datos (NO borrar)
+  .env             → Configuración local
+  INICIAR.bat      → Atajo de inicio para Windows
+
+------------------------------------------------------------
+BACKUP DE DATOS
+------------------------------------------------------------
+  La base de datos está en: data\metricpos.db
+  Cópiala periódicamente para tener respaldo.
+
+------------------------------------------------------------
+SOPORTE
+------------------------------------------------------------
+  MetricPOS Honduras — v7.3.0
+  Desarrollado para Inversiones Buenos Aires S.A.
+============================================================

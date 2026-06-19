@@ -1,0 +1,38 @@
+# ══════════════════════════════════════════════════════════
+#  MetricPOS v7.3 — Docker Compose para VPS
+#  Uso: docker compose up -d
+# ══════════════════════════════════════════════════════════
+
+version: '3.9'
+
+services:
+  metricpos:
+    build: .
+    container_name: metricpos-buenosaires
+    restart: unless-stopped
+    ports:
+      - "3000:3000"          # Cambiar si usas nginx (dejar solo "127.0.0.1:3000:3000")
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - JWT_SECRET=${JWT_SECRET}
+      - SERVER_URL=${SERVER_URL}
+      - CORS_ORIGIN=${CORS_ORIGIN}
+      - DATA_DIR=/datos/metricpos
+    volumes:
+      - metricpos_data:/datos/metricpos   # BD persistente
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/licencia/estado"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  metricpos_data:
+    driver: local

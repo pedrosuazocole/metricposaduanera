@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
+  <rect width="192" height="192" rx="34.56" fill="#1e3a5f"/>
+  <rect x="19.200000000000003" y="67.19999999999999" width="153.60000000000002" height="15.36" rx="7.68" fill="#2563eb"/>
+  <rect x="19.200000000000003" y="96" width="115.19999999999999" height="15.36" rx="7.68" fill="white" opacity="0.9"/>
+  <rect x="19.200000000000003" y="124.80000000000001" width="86.4" height="15.36" rx="7.68" fill="white" opacity="0.6"/>
+  <circle cx="144" cy="57.599999999999994" r="26.880000000000003" fill="#2563eb"/>
+  <text x="144" y="69.12" text-anchor="middle" font-family="Arial" font-weight="bold" font-size="34.56" fill="white">M</text>
+</svg>

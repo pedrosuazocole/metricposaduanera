@@ -1,0 +1,34 @@
+{
+  "name": "metricpos-buenosaires",
+  "version": "7.3.0",
+  "description": "Metric POS v7.3 — Inversiones Buenos Aires",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "pm2": "pm2 start server.js --name metricpos-buenosaires",
+    "pm2:stop": "pm2 stop metricpos-buenosaires",
+    "pm2:restart": "pm2 restart metricpos-buenosaires",
+    "pm2:logs": "pm2 logs metricpos-buenosaires",
+    "docker:build": "docker build -t metricpos-buenosaires .",
+    "docker:run": "docker compose up -d",
+    "docker:stop": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^5.0.1",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "pdfkit": "^0.18.0",
+    "sql.js": "^1.12.0",
+    "uuid": "^10.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["pos", "facturacion", "honduras", "sar"],
+  "author": "Metric POS Honduras",
+  "license": "UNLICENSED"
+}

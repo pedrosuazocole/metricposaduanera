@@ -2860,8 +2860,9 @@ async function processNdInvoice() {
       turno_id: turnoActivoCajero?.id || null, serie_id: ndSerieId
     });
 
-    // Buscar los datos del CAI/rango de la serie ND seleccionada (no de la sucursal)
-    const ndSerieDatos = ndSeriesCache.find(s => s.id === ndSerieId) || {};
+    // Usar la serie ya validada arriba (serieSeleccionada) — evita una segunda
+    // búsqueda que podría fallar por timing o por referencia de array distinta.
+    console.log('[ND DEBUG] ndSerieId:', ndSerieId, '| serieSeleccionada:', serieSeleccionada);
 
     const saleForPrint = {
       id: r.id, numero_factura: r.numero_factura, fecha: nowHN(),
@@ -2876,11 +2877,18 @@ async function processNdInvoice() {
       aduanaValorCIF:      ndAduanaValorCIF,
       aduanaNumContenedor: ndAduanaNumContenedor,
       // CAI/rango propios de la serie de Nota de Débito seleccionada
-      serieCai:         ndSerieDatos.cai         || '',
-      serieRangoIni:    ndSerieDatos.rango_ini   || '',
-      serieRangoFin:    ndSerieDatos.rango_fin   || '',
-      serieFechaLimite: ndSerieDatos.fecha_limite|| '',
+      serieCai:         serieSeleccionada.cai          || '',
+      serieRangoIni:    serieSeleccionada.rango_ini     || '',
+      serieRangoFin:    serieSeleccionada.rango_fin      || '',
+      serieFechaLimite: serieSeleccionada.fecha_limite   || '',
     };
+
+    console.log('[ND DEBUG] saleForPrint CAI fields:', {
+      serieCai: saleForPrint.serieCai,
+      serieRangoIni: saleForPrint.serieRangoIni,
+      serieRangoFin: saleForPrint.serieRangoFin,
+      serieFechaLimite: saleForPrint.serieFechaLimite
+    });
 
     printNotaDebito(saleForPrint);
 
@@ -2909,6 +2917,7 @@ function printNotaDebito(sale) {
   const docTransporte = sale.aduanaDocTransporte || '';
   const valorCIF      = sale.aduanaValorCIF      || '';
   const numContenedor = sale.aduanaNumContenedor || '';
+  const tienePoliza = poliza || docTransporte || valorCIF || numContenedor;
 
   let importeExentoCalc = 0;
   const itemsHTML = sale.items.map(i => {
@@ -2917,11 +2926,11 @@ function printNotaDebito(sale) {
     const totalItem = (i.precio||0) * (i.cantidad||1);
     if (!esGravado) importeExentoCalc += totalItem;
     return `<tr>
-      <td style="border:1px solid #ccc;padding:6px 8px;text-align:center">${i.cantidad}</td>
-      <td style="border:1px solid #ccc;padding:6px 8px">${i.nombre}</td>
-      <td style="border:1px solid #ccc;padding:6px 8px;text-align:center">${isv_pct}</td>
-      <td style="border:1px solid #ccc;padding:6px 8px;text-align:right">L. ${(i.precio||0).toFixed(2)}</td>
-      <td style="border:1px solid #ccc;padding:6px 8px;text-align:right">L. ${totalItem.toFixed(2)}</td>
+      <td style="padding:6px 10px;text-align:center;border-bottom:1px solid #eee">${i.cantidad}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${i.nombre}</td>
+      <td style="padding:6px 10px;text-align:center;border-bottom:1px solid #eee">${isv_pct}</td>
+      <td style="padding:6px 10px;text-align:right;border-bottom:1px solid #eee">${(i.precio||0).toFixed(2)}</td>
+      <td style="padding:6px 10px;text-align:right;border-bottom:1px solid #eee">${totalItem.toFixed(2)}</td>
     </tr>`;
   }).join('');
 
@@ -2939,70 +2948,77 @@ function printNotaDebito(sale) {
   openPrint(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Nota de Débito ${sale.numero_factura}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;font-family:Arial,Helvetica,sans-serif}
-body{font-size:12px;padding:16px;background:#fff}
-@media print{@page{size:letter portrait;margin:8mm}body{padding:0}}
-.iw{max-width:740px;margin:0 auto;border:1px solid #aaa}
-.hdr{display:flex;justify-content:space-between;align-items:flex-start;padding:14px 18px 12px;border-bottom:2px solid #333}
+body{font-size:12px;padding:18px;background:#fff;color:#1a1a1a}
+@media print{@page{size:letter portrait;margin:10mm}body{padding:0}}
+.iw{max-width:780px;margin:0 auto}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:14px;border-bottom:2px solid #333;margin-bottom:14px}
 .hdr-left{display:flex;align-items:flex-start;gap:14px}
+.logo-circle{width:64px;height:64px;border-radius:50%;object-fit:cover;flex-shrink:0}
 .co-name{font-size:15px;font-weight:700;color:#1a1a1a}
-.co-sub{font-size:10px;color:#444;margin-top:2px}
-.badge-title{font-size:22px;font-weight:700;letter-spacing:2px;color:#4c1d95;text-align:center}
-.badge-num{font-size:12px;font-family:monospace;background:#7c3aed;color:#fff;padding:3px 12px;border-radius:4px;display:inline-block;margin-top:4px;font-weight:700}
-.client-row{padding:10px 18px;background:#faf8ff;border-bottom:1px solid #ddd;display:flex;flex-wrap:wrap;gap:10px 24px}
-.cl-label{font-size:9px;font-weight:700;text-transform:uppercase;color:#666;letter-spacing:.5px}
-.cl-val{font-size:12px;border-bottom:1px solid #999;padding-bottom:1px;min-width:120px;display:inline-block}
-.intro{padding:7px 18px;font-size:11px;border-bottom:1px solid #ddd;color:#333}
-.poliza-row{padding:8px 18px;border-bottom:1px solid #ddd;font-size:11px;display:flex;gap:24px;flex-wrap:wrap}
-.p-label{font-weight:700;color:#444}
-.p-val{border-bottom:1px solid #999;min-width:60px;display:inline-block;padding-bottom:1px}
-.items-table{width:100%;border-collapse:collapse}
-.items-table thead th{background:#7c3aed;color:#fff;padding:7px 8px;font-size:11px;text-transform:uppercase;border:1px solid #7c3aed}
+.co-sub{font-size:10.5px;color:#444;margin-top:2px;line-height:1.5}
+.badge-title{font-size:24px;font-weight:800;letter-spacing:1px;color:#1a1a1a;text-align:right;white-space:nowrap}
+.badge-num-row{text-align:right;margin-top:2px;font-size:11px;color:#444}
+.badge-num{font-family:monospace;font-weight:700;font-size:12px;color:#222}
+.client-row{display:flex;gap:32px;margin-bottom:12px;flex-wrap:wrap}
+.cl-label{font-size:10px;font-weight:700;text-transform:uppercase;color:#555}
+.cl-val{font-size:12px;color:#1a1a1a;margin-top:1px}
+.intro{font-size:11px;color:#333;margin-bottom:10px}
+.poliza-row{font-size:11px;color:#333;margin-bottom:14px;display:flex;gap:28px;flex-wrap:wrap}
+.poliza-row span.lbl{font-weight:400}
+.poliza-line{border-bottom:1px solid #999;display:inline-block;min-width:90px;padding-bottom:1px}
+.items-table{width:100%;border-collapse:collapse;margin-bottom:18px}
+.items-table thead th{border-bottom:2px solid #7c3aed;border-top:1px solid #7c3aed;padding:7px 10px;font-size:11px;font-weight:700;text-align:left;color:#1a1a1a;background:#f5f3ff}
 .items-table thead th.r{text-align:right}.items-table thead th.c{text-align:center}
-.items-table tbody tr:nth-child(even){background:#faf8ff}
-.totals-wrapper{display:flex;justify-content:space-between;align-items:flex-end;padding:12px 18px;border-top:2px solid #333;gap:20px}
-.exo-section{flex:1;font-size:11px;display:flex;flex-direction:column;gap:5px}
-.exo-line{display:flex;gap:6px;align-items:baseline}
-.exo-field{border-bottom:1px solid #999;flex:1;min-width:80px;font-weight:600}
-.tt{width:240px;flex-shrink:0;border-collapse:collapse}
-.tt td{padding:3px 0;font-size:12px;border:none}
+.totals-block{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-bottom:14px}
+.exo-section{flex:1;font-size:11px;display:flex;flex-direction:column;gap:6px;align-self:flex-start}
+.exo-line span.exo-lbl{font-weight:700}
+.exo-field{border-bottom:1px solid #999;display:inline-block;min-width:140px}
+.tt{border-collapse:collapse;min-width:260px}
+.tt-title{text-align:right;font-size:10.5px;font-weight:700;color:#444;padding-bottom:4px}
+.tt td{padding:2px 0;font-size:12px}
+.tt td:first-child{padding-right:16px}
 .tt td:last-child{text-align:right;font-weight:600}
-.tt .gran td{font-size:15px;font-weight:700;color:#7c3aed;border-top:2px solid #7c3aed;padding-top:5px}
-.words{padding:8px 18px;border-top:1px solid #ddd;font-size:11px}
-.sar{padding:10px 18px;background:#faf8ff;border-top:1px solid #ddd;font-size:10px;color:#444;line-height:1.9}
-.cai-val{font-family:monospace;font-weight:700;font-size:11px;color:#1a1a1a}
-.copies{margin-top:6px;font-weight:700;font-size:11px;text-align:center}
-.exija{margin-top:3px;font-size:11px;font-weight:700;text-align:center}
+.tt .gran{border-top:2px solid #7c3aed;margin-top:4px}
+.tt .gran td{padding-top:6px;font-size:14px;font-weight:800;color:#7c3aed}
+.words{font-size:11px;margin-bottom:16px}
+.sar-block{font-size:11px;line-height:1.9;margin-bottom:4px}
+.cai-val{font-family:monospace;font-weight:700;color:#1a1a1a}
+.copies{margin-top:10px;font-weight:700;font-size:11px}
+.exija{margin-top:6px;font-size:11.5px;font-weight:700}
 </style></head><body><div class="iw">
+
 <div class="hdr">
   <div class="hdr-left">
-    ${logoSrc?`<img src="${logoSrc}" style="max-height:70px;max-width:120px;object-fit:contain;margin-right:8px"/>`:``}
+    ${logoSrc?`<img src="${logoSrc}" class="logo-circle"/>`:``}
     <div>
       <div class="co-name">${b.nombre||'AGENCIA ADUANERA'}</div>
-      <div class="co-sub">RTN: ${b.rtn||''}</div>
-      <div class="co-sub">${b.direccion||''}</div>
-      ${b.telefono?`<div class="co-sub">TEL. ${b.telefono}</div>`:''}
+      <div class="co-sub">RTN: ${b.rtn||''}<br>${b.direccion||''}<br>${b.telefono?`TEL. ${b.telefono}`:''}</div>
     </div>
   </div>
-  <div style="text-align:center;min-width:160px">
-    <div class="badge-title">Nota de Débito</div>
-    <div class="badge-num">${sale.numero_factura}</div>
+  <div>
+    <div class="badge-title">NOTA DE DEBITO</div>
+    <div class="badge-num-row">No&nbsp;&nbsp;<span class="badge-num">${sale.numero_factura}</span></div>
   </div>
 </div>
+
 <div class="client-row">
-  <div><div class="cl-label">Señores:</div><div class="cl-val">${sale.cliente?.nombre||'—'}</div></div>
+  <div><div class="cl-label">Cliente:</div><div class="cl-val">${sale.cliente?.nombre||'Consumidor Final'}</div></div>
   <div><div class="cl-label">Fecha</div><div class="cl-val">${fechaStr}</div></div>
   <div><div class="cl-label">R.T.N.:</div><div class="cl-val">${sale.cliente?.rtn||'—'}</div></div>
 </div>
+
+${tienePoliza ? `
 <div class="intro">Hemos Cargado a su apreciable cuenta por registro, peso, trámite, despacho, y pago de impuesto de:</div>
 <div class="poliza-row">
-  <div><span class="p-label">Número de Póliza:</span> <span class="p-val">${poliza}</span></div>
-  <div><span class="p-label">Documento de Transporte:</span> <span class="p-val">${docTransporte}</span></div>
-  <div><span class="p-label">Valor C.I.F:</span> <span class="p-val">${valorCIF}</span></div>
-  <div><span class="p-label">Número de Contenedor:</span> <span class="p-val">${numContenedor}</span></div>
-</div>
+  <div><span class="lbl">Número de Póliza:</span> <span class="poliza-line">${poliza}</span></div>
+  <div><span class="lbl">Documento de Transporte:</span> <span class="poliza-line">${docTransporte}</span></div>
+  <div><span class="lbl">Valor C.I.F:</span> <span class="poliza-line">${valorCIF}</span></div>
+  ${numContenedor?`<div><span class="lbl">Número de Contenedor:</span> <span class="poliza-line">${numContenedor}</span></div>`:''}
+</div>` : ''}
+
 <table class="items-table">
 <thead><tr>
-  <th class="c" style="width:58px">Cantidad</th>
+  <th class="c" style="width:60px">Cantidad</th>
   <th>Nombre del Servicio</th>
   <th class="c" style="width:55px">% ISV</th>
   <th class="r" style="width:95px">Precio Unitario</th>
@@ -3010,14 +3026,15 @@ body{font-size:12px;padding:16px;background:#fff}
 </tr></thead>
 <tbody>${itemsHTML}</tbody>
 </table>
-<div class="totals-wrapper">
+
+<div class="totals-block">
   <div class="exo-section">
-    <div class="exo-line"><span style="font-weight:700;white-space:nowrap">No Orden de Compra Exenta:</span><span class="exo-field">${ordenCompra}</span></div>
-    <div class="exo-line"><span style="font-weight:700;white-space:nowrap">No Constancia de Registro Exonerados:</span><span class="exo-field">${constancia}</span></div>
-    <div class="exo-line"><span style="font-weight:700;white-space:nowrap">No Registro SAG:</span><span class="exo-field">${sag}</span></div>
+    <div class="exo-line"><span class="exo-lbl">No Orden de Compra Exenta:</span> <span class="exo-field">${ordenCompra}</span></div>
+    <div class="exo-line"><span class="exo-lbl">No Constancia de Registro Exonerados:</span> <span class="exo-field">${constancia}</span></div>
+    <div class="exo-line"><span class="exo-lbl">No Registro SAG:</span> <span class="exo-field">${sag}</span></div>
   </div>
   <table class="tt">
-    <tr><td colspan="2" style="text-align:right;font-size:10px;font-weight:700;color:#555;padding-bottom:4px">Monto en Lempiras (L.)</td></tr>
+    <tr><td colspan="2" class="tt-title">Monto en Lempiras (L.)</td></tr>
     <tr><td>Importe Exento</td><td>${importeExento.toFixed(2)}</td></tr>
     <tr><td>Importe Exonerado</td><td>${importeExonerado.toFixed(2)}</td></tr>
     <tr><td>Desc. / Rebajas</td><td>${descuento.toFixed(2)}</td></tr>
@@ -3025,17 +3042,19 @@ body{font-size:12px;padding:16px;background:#fff}
     <tr><td>Importe Gravado 18%</td><td>0.00</td></tr>
     <tr><td>ISV 15%</td><td>${isv15.toFixed(2)}</td></tr>
     <tr><td>ISV 18%</td><td>${isv18.toFixed(2)}</td></tr>
-    <tr class="gran"><td>Total a Pagar</td><td>${total.toFixed(2)}</td></tr>
+    <tr class="gran"><td>Total a Pagar</td><td>L${total.toFixed(2)}</td></tr>
   </table>
 </div>
+
 <div class="words"><strong>Son: L</strong> ${moneyToWords(total)}</div>
-<div class="sar">
+
+<div class="sar-block">
   <div><strong>C.A.I.:</strong> <span class="cai-val">${sale.serieCai||''}</span></div>
-  <div>Rango Autorizado ${sale.serieRangoIni||''} a la ${sale.serieRangoFin||''}</div>
-  <div>Fecha Límite de Emisión <strong>${fD(sale.serieFechaLimite||'')}</strong></div>
-  <div class="copies">ORIGINAL: CLIENTE &nbsp;&nbsp;&nbsp; COPIA: OBLIGADO TRIBUTARIO EMISOR</div>
-  <div class="exija">La Nota de Débito es Beneficio de Todos EXÍJALA!!!</div>
+  <div>Rango Autorizado <strong>${sale.serieRangoIni||''}</strong> a la <strong>${sale.serieRangoFin||''}</strong></div>
+  <div>Fecha Limite de Emision <strong>${sale.serieFechaLimite?fD(sale.serieFechaLimite):'—'}</strong></div>
 </div>
+<div class="copies">ORIGINAL: CLIENTE<br>COPIA: OBLIGADO TRIBUTARIO EMISOR</div>
+
 </div></body></html>`, "Nota de Débito");
 }
 

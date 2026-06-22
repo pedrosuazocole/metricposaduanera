@@ -414,6 +414,43 @@
           </div><!-- fin cuerpo -->
         </div>
       </div>
+      <!-- ÓRDENES DE COMPRA -->
+      <div id="oc-view" class="view">
+        <div class="page">
+          <div class="page-header">
+            <div>
+              <div class="page-title">🧾 Órdenes de Compra</div>
+              <div class="page-subtitle">Documento administrativo interno — sin ISV ni CAI</div>
+            </div>
+            <button class="btn-primary" onclick="abrirModalOC()">+ Nueva Orden de Compra</button>
+          </div>
+
+          <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+            <input type="text" id="oc-search" placeholder="Buscar por número o cliente..."
+              style="flex:1;min-width:220px;border:1px solid #e2e8f0;border-radius:8px;padding:9px 12px;font-size:13px;outline:none">
+          </div>
+
+          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
+            <table style="width:100%;border-collapse:collapse">
+              <thead>
+                <tr style="background:#f8fafc;border-bottom:1px solid #e2e8f0">
+                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#64748b">N° ORDEN</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#64748b">CLIENTE</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#64748b">EMISIÓN</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#64748b">CONDICIÓN</th>
+                  <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:#64748b">TOTAL</th>
+                  <th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:700;color:#64748b">ACCIONES</th>
+                </tr>
+              </thead>
+              <tbody id="oc-tabla-body"></tbody>
+            </table>
+            <div id="oc-empty-state" style="display:none;text-align:center;padding:40px;color:#94a3b8;font-size:13px">
+              Sin órdenes de compra registradas todavía.
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- PRODUCTOS -->
       <div id="products-view" class="view">
         <div class="page">
@@ -1123,6 +1160,89 @@
   </div>
 </div>
 
+<!-- MODAL ORDEN DE COMPRA -->
+<div class="modal-overlay" id="oc-modal">
+  <div class="modal" style="max-width:760px;max-height:92vh;overflow-y:auto">
+    <div class="modal-title">🧾 Nueva Orden de Compra</div>
+
+    <div class="form-grid" style="margin-bottom:14px">
+      <div class="form-field" style="grid-column:1/-1">
+        <label>Cliente</label>
+        <select id="oc-cliente"></select>
+      </div>
+      <div class="form-field">
+        <label>Fecha de Emisión</label>
+        <input type="date" id="oc-emision">
+      </div>
+      <div class="form-field">
+        <label>Fecha de Vencimiento</label>
+        <input type="date" id="oc-vence">
+      </div>
+      <div class="form-field">
+        <label>Condición</label>
+        <select id="oc-condicion">
+          <option value="CONTADO">CONTADO</option>
+          <option value="CRÉDITO 15 DÍAS">CRÉDITO 15 DÍAS</option>
+          <option value="CRÉDITO 30 DÍAS">CRÉDITO 30 DÍAS</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Emitido por</label>
+        <input type="text" id="oc-emitido-por" placeholder="Nombre de quien emite">
+      </div>
+    </div>
+
+    <div style="position:relative;margin-bottom:12px">
+      <label style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:5px">Buscar producto del catálogo</label>
+      <input type="text" id="oc-buscar-producto" placeholder="Escribí el nombre, código o categoría del producto..."
+        autocomplete="off"
+        style="width:100%;border:1px solid #e2e8f0;border-radius:8px;padding:9px 12px;font-size:13px;outline:none">
+      <div id="oc-buscar-resultados" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:260px;overflow-y:auto;margin-top:4px"></div>
+    </div>
+
+    <div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:14px">
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="background:#f8fafc;border-bottom:1px solid #e2e8f0">
+            <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:700;color:#64748b;width:70px">Código</th>
+            <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:700;color:#64748b">Nombre del Artículo</th>
+            <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:700;color:#64748b;width:80px">Unidad</th>
+            <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:700;color:#64748b;width:100px">Precio Unit.</th>
+            <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:700;color:#64748b;width:80px">Cantidad</th>
+            <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:700;color:#64748b;width:100px">Total</th>
+            <th style="width:36px"></th>
+          </tr>
+        </thead>
+        <tbody id="oc-items-body"></tbody>
+      </table>
+      <div style="padding:8px 10px;background:#f8fafc;border-top:1px solid #e2e8f0">
+        <button type="button" onclick="ocAgregarItem()" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:7px;padding:6px 14px;font-size:12px;font-weight:600;color:#2563eb;cursor:pointer;font-family:inherit">+ Agregar artículo en blanco</button>
+      </div>
+    </div>
+
+    <div class="form-grid" style="margin-bottom:14px">
+      <div class="form-field" style="grid-column:1/-1">
+        <label>Nota</label>
+        <input type="text" id="oc-nota" placeholder="Observaciones (opcional)">
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;margin-bottom:16px">
+      <table style="width:260px;border-collapse:collapse">
+        <tr><td style="padding:3px 0;font-size:13px;color:#475569">Total Bruto</td><td style="padding:3px 0;text-align:right;font-size:13px;font-weight:600" id="oc-total-bruto">L. 0.00</td></tr>
+        <tr><td style="padding:3px 0;font-size:13px;color:#475569">Total Impuesto</td><td style="padding:3px 0;text-align:right;font-size:13px;font-weight:600" id="oc-total-impuesto">L. 0.00</td></tr>
+        <tr><td style="padding:3px 0;font-size:13px;color:#475569">Total Descuento</td><td style="padding:3px 0;text-align:right;font-size:13px;font-weight:600" id="oc-total-descuento">L. 0.00</td></tr>
+        <tr style="border-top:2px solid #1e3a5f"><td style="padding:6px 0 0;font-size:15px;font-weight:800;color:#1e3a5f">TOTAL GENERAL</td><td style="padding:6px 0 0;text-align:right;font-size:15px;font-weight:800;color:#1e3a5f" id="oc-total-general">L. 0.00</td></tr>
+      </table>
+    </div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" onclick="closeModal('oc-modal')">Cancelar</button>
+      <button type="button" class="btn-confirm" onclick="guardarOrdenCompra()">💾 Guardar y Emitir</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL EDITOR DE REPORTES -->
 <div class="modal-overlay" id="editor-reporte-modal">
   <div class="modal" style="max-width:900px;max-height:90vh;overflow-y:auto">
@@ -1298,14 +1418,51 @@ const _origShowView = window.showView;
 document.addEventListener('click', function(e) {
   const navItem = e.target.closest('.nav-item');
   if (navItem) closeSidebar();
+
+  // Cerrar dropdown de búsqueda de productos en Órdenes de Compra al hacer clic fuera
+  const ocBuscador = document.getElementById('oc-buscar-producto');
+  const ocResultados = document.getElementById('oc-buscar-resultados');
+  if (ocBuscador && ocResultados && !ocBuscador.contains(e.target) && !ocResultados.contains(e.target)) {
+    ocResultados.style.display = 'none';
+  }
 });
 
 // ── PWA: Service Worker ─────────────────────────────────
+// Registro con auto-actualización forzada: si hay un SW nuevo disponible,
+// se activa inmediatamente y se recarga la página una sola vez — sin que
+// el usuario tenga que limpiar caché o hacer Ctrl+Shift+R manualmente.
 if ('serviceWorker' in navigator) {
+  let _swRecargaHecha = false;
+
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js')
-      .then(r => console.log('SW registrado:', r.scope))
+      .then(reg => {
+        console.log('SW registrado:', reg.scope);
+        // Forzar verificación de actualización contra el servidor cada vez que carga la app
+        reg.update();
+
+        // Si ya hay un SW esperando (instalado pero no activo), activarlo ahora
+        if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+
+        // Si se detecta un nuevo SW instalándose, activarlo en cuanto esté listo
+        reg.addEventListener('updatefound', () => {
+          const nuevoSW = reg.installing;
+          if (!nuevoSW) return;
+          nuevoSW.addEventListener('statechange', () => {
+            if (nuevoSW.state === 'installed' && reg.waiting) {
+              reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+            }
+          });
+        });
+      })
       .catch(e => console.warn('SW error:', e));
+
+    // Cuando el SW activo cambia (nueva versión tomó control), recargar una vez
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (_swRecargaHecha) return;
+      _swRecargaHecha = true;
+      window.location.reload();
+    });
   });
 }
 

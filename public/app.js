@@ -5,6 +5,12 @@ const API = '';
 let TOKEN = localStorage.getItem('mp_token');
 let USER  = JSON.parse(localStorage.getItem('mp_user')||'null');
 let BRANCH= JSON.parse(localStorage.getItem('mp_branch')||'null');
+// Caches globales compartidas entre módulos (Facturación, ND, Órdenes de Compra, Dashboard, etc.)
+// Declaradas aquí arriba para evitar ReferenceError sin importar qué módulo se abra primero.
+let products_cache  = [];
+let clients_cache   = [];
+let impuestos_cache = [];
+let bancos_cache    = [];
 
 // ─── API HELPER ──────────────────────────────────────────────────────────────
 async function api(method, path, body) {
@@ -210,6 +216,7 @@ const NAV = [
   { view:'dashboard',    label:'📈 Dashboard',         roles:['admin','supervisor','cajero'] },
   { view:'facturacion',  label:'Facturación',         roles:['admin','supervisor','cajero'] },
   { view:'nd',           label:'📋 Notas de Débito',   roles:['admin','supervisor','cajero'] },
+  { view:'oc',           label:'🧾 Órdenes de Compra', roles:['admin','supervisor','cajero'] },
   { view:'products',     label:'Productos',           roles:['admin','supervisor','cajero'] },
   { view:'clients',      label:'Clientes',            roles:['admin','supervisor','cajero'] },
   { view:'suppliers',    label:'Proveedores',         roles:['admin','supervisor'] },
@@ -254,7 +261,7 @@ function buildNav() {
 let currentView = 'dashboard';
 function navigateTo(view) {
   // Verificar permiso — dashboard y facturacion siempre accesibles
-  if (view !== 'dashboard' && view !== 'facturacion' && view !== 'nd' && PERMISOS_BLOQUEADOS[view]) {
+  if (view !== 'dashboard' && view !== 'facturacion' && view !== 'nd' && view !== 'oc' && PERMISOS_BLOQUEADOS[view]) {
     alert('⚠️ No tienes permiso para acceder a este módulo.');
     return;
   }
@@ -271,6 +278,7 @@ function renderView(view) {
     case 'dashboard':   renderDashboard(); break;
     case 'facturacion': renderFacturacion(); break;
     case 'nd':          renderNotaDebito(); break;
+    case 'oc':          renderOrdenCompra(); break;
     case 'products':  renderProducts(); break;
     case 'clients':   renderClients(); break;
     case 'suppliers': renderSuppliers(); break;
@@ -2503,7 +2511,10 @@ async function processFacInvoice() {
       isv15, isv18, total: afterDisc, exonerado: facExonerado,
       forma_pago: facFormaPago, monto_recibido: recibido, cambio, banco_id: fac_banco_id,
       orden_compra_exenta: facOrdenCompra, constancia_registro: facConstancia, identificativo_sag: facSAG,
-      turno_id: turnoActivoCajero?.id || null, serie_id: facSerieId
+      turno_id: turnoActivoCajero?.id || null, serie_id: facSerieId,
+      // Datos aduaneros — ahora se persisten en la venta para poder reimprimirlos luego
+      aduana_poliza: facAduanaPoliza, aduana_doc_transporte: facAduanaDocTransporte,
+      aduana_valor_cif: facAduanaValorCIF, aduana_num_contenedor: facAduanaNumContenedor
     });
 
     // Buscar los datos del CAI/rango de la serie de Factura seleccionada
@@ -2999,8 +3010,371 @@ body{font-size:12px;padding:18px;background:#fff;color:#1a1a1a}
 </div></body></html>`, "Nota de Débito");
 }
 
+// ─── ÓRDENES DE COMPRA ────────────────────────────────────────────────────────
+let ocCache = [];
+let ocItemsTemp = []; // ítems en edición dentro del modal
+let ocItemSeq = 0;    // contador para generar IDs temporales únicos por fila
+
+async function renderOrdenCompra() {
+  try {
+    [ocCache, clients_cache] = await Promise.all([
+      GET('/ordenes_compra'),
+      GET('/clientes'),
+    ]);
+  } catch(e) { ocCache = []; }
+
+  ocRenderTabla();
+
+  const search = document.getElementById('oc-search');
+  if (search) { search.oninput = ocRenderTabla; }
+}
+
+function ocRenderTabla() {
+  const q = (document.getElementById('oc-search')?.value || '').toLowerCase();
+  const body = document.getElementById('oc-tabla-body');
+  const empty = document.getElementById('oc-empty-state');
+  if (!body) return;
+
+  const filtradas = ocCache.filter(o =>
+    !q || o.numero_orden?.toLowerCase().includes(q) || o.cliente_nombre?.toLowerCase().includes(q)
+  );
+
+  if (filtradas.length === 0) {
+    body.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  body.innerHTML = filtradas.map(o => `
+    <tr style="border-bottom:1px solid #f1f5f9">
+      <td style="padding:10px 14px;font-family:monospace;font-weight:700;color:#1e3a5f;font-size:13px">${o.numero_orden}</td>
+      <td style="padding:10px 14px;font-size:13px;color:#334155">${o.cliente_nombre||'—'}</td>
+      <td style="padding:10px 14px;font-size:12px;color:#64748b">${fD(o.emision)}</td>
+      <td style="padding:10px 14px;font-size:12px;color:#64748b">${o.condicion||'CONTADO'}</td>
+      <td style="padding:10px 14px;text-align:right;font-size:13px;font-weight:700;color:#1e3a5f">${fL(o.total_general)}</td>
+      <td style="padding:10px 14px;text-align:center">
+        <button onclick="reimprimirOrdenCompra('${o.id}')" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:5px 11px;font-size:12px;font-weight:600;color:#2563eb;cursor:pointer;font-family:inherit">🖨️ Reimprimir</button>
+      </td>
+    </tr>`).join('');
+}
+
+async function abrirModalOC() {
+  ocItemsTemp = [];
+  ocItemSeq = 0;
+
+  const clSel = document.getElementById('oc-cliente');
+  if (clSel) clSel.innerHTML = clients_cache.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+
+  document.getElementById('oc-emision').value = todayHN();
+  document.getElementById('oc-vence').value = todayHN();
+  document.getElementById('oc-condicion').value = 'CONTADO';
+  document.getElementById('oc-emitido-por').value = USER?.nombre || '';
+  document.getElementById('oc-nota').value = '';
+
+  // Cargar el catálogo de productos para el buscador (si no está ya en cache)
+  if (!products_cache || products_cache.length === 0) {
+    try { products_cache = await GET('/productos', `sucursal_id=${USER.sucursal_id}`); }
+    catch(e) { products_cache = []; }
+  }
+  const buscador = document.getElementById('oc-buscar-producto');
+  if (buscador) {
+    buscador.value = '';
+    document.getElementById('oc-buscar-resultados').style.display = 'none';
+    buscador.oninput = ocBuscarProductos;
+  }
+
+  ocAgregarItem(); // arranca con una fila vacía lista para escribir
+  openModal('oc-modal');
+}
+
+function ocBuscarProductos() {
+  const q = (document.getElementById('oc-buscar-producto')?.value || '').toLowerCase().trim();
+  const cont = document.getElementById('oc-buscar-resultados');
+  if (!cont) return;
+
+  if (!q) { cont.style.display = 'none'; cont.innerHTML = ''; return; }
+
+  const coincidencias = (products_cache||[]).filter(p =>
+    p.nombre?.toLowerCase().includes(q) ||
+    p.codigo?.toLowerCase().includes(q) ||
+    p.categoria?.toLowerCase().includes(q)
+  ).slice(0, 25);
+
+  if (coincidencias.length === 0) {
+    cont.innerHTML = '<div style="padding:12px;font-size:12px;color:#94a3b8">Sin resultados.</div>';
+    cont.style.display = 'block';
+    return;
+  }
+
+  cont.innerHTML = coincidencias.map(p => `
+    <div onclick="ocSeleccionarProducto('${p.id}')"
+      style="padding:9px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between;align-items:center;gap:10px"
+      onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+      <div style="min-width:0">
+        <div style="font-size:13px;font-weight:600;color:#1e3a5f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div>
+        <div style="font-size:11px;color:#94a3b8">${p.codigo||'—'} ${p.categoria?'· '+p.categoria:''}</div>
+      </div>
+      <div style="font-size:13px;font-weight:700;color:#1e3a5f;white-space:nowrap">L. ${(p.precio_venta||0).toFixed(2)}</div>
+    </div>`).join('');
+  cont.style.display = 'block';
+}
+
+function ocSeleccionarProducto(productoId) {
+  const p = (products_cache||[]).find(x => x.id === productoId);
+  if (!p) return;
+
+  // Si la última fila está vacía (sin nombre), se reutiliza; si no, se agrega una nueva
+  let fila = ocItemsTemp[ocItemsTemp.length - 1];
+  if (!fila || (fila.nombre && fila.nombre.trim())) {
+    ocItemSeq++;
+    fila = { tempId: ocItemSeq, codigo:'', nombre:'', unidad:'', precio_unit:0, cantidad:1 };
+    ocItemsTemp.push(fila);
+  }
+  fila.codigo = p.codigo || '';
+  fila.nombre = p.nombre || '';
+  fila.unidad = p.unidad || 'UND';
+  fila.precio_unit = p.precio_venta || 0;
+  fila.cantidad = fila.cantidad || 1;
+
+  ocRenderItems();
+
+  // Limpiar el buscador y ocultar resultados, listo para la siguiente búsqueda
+  const buscador = document.getElementById('oc-buscar-producto');
+  if (buscador) buscador.value = '';
+  document.getElementById('oc-buscar-resultados').style.display = 'none';
+}
+
+function ocAgregarItem() {
+  ocItemSeq++;
+  ocItemsTemp.push({ tempId: ocItemSeq, codigo:'', nombre:'', unidad:'', precio_unit:0, cantidad:1 });
+  ocRenderItems();
+}
+
+function ocQuitarItem(tempId) {
+  ocItemsTemp = ocItemsTemp.filter(i => i.tempId !== tempId);
+  ocRenderItems();
+}
+
+function ocUpdateItem(tempId, campo, valor) {
+  const item = ocItemsTemp.find(i => i.tempId === tempId);
+  if (!item) return;
+  if (campo === 'precio_unit' || campo === 'cantidad') {
+    item[campo] = parseFloat(valor) || 0;
+  } else {
+    item[campo] = valor;
+  }
+  // Solo se recalculan los totales (sin reconstruir los inputs) para no perder
+  // el foco ni la posición del cursor mientras el usuario está escribiendo.
+  ocActualizarFilaTotal(tempId);
+  ocRecalcularTotales();
+}
+
+/** Actualiza solo la celda de "Total" de una fila, sin reconstruir el input (evita perder el foco) */
+function ocActualizarFilaTotal(tempId) {
+  const item = ocItemsTemp.find(i => i.tempId === tempId);
+  if (!item) return;
+  const idx = ocItemsTemp.findIndex(i => i.tempId === tempId);
+  const fila = document.querySelectorAll('#oc-items-body tr')[idx];
+  if (!fila) return;
+  const celdaTotal = fila.children[5]; // 6ta columna: Total
+  if (celdaTotal) celdaTotal.textContent = fL((item.precio_unit||0)*(item.cantidad||0));
+}
+
+function ocRenderItems() {
+  const body = document.getElementById('oc-items-body');
+  if (!body) return;
+  body.innerHTML = ocItemsTemp.map(i => `
+    <tr style="border-bottom:1px solid #f1f5f9">
+      <td style="padding:5px 6px"><input type="text" value="${i.codigo}" oninput="ocUpdateItem(${i.tempId},'codigo',this.value)" style="width:100%;border:1px solid #e2e8f0;border-radius:5px;padding:5px 7px;font-size:12px;outline:none"></td>
+      <td style="padding:5px 6px"><input type="text" value="${i.nombre}" oninput="ocUpdateItem(${i.tempId},'nombre',this.value)" placeholder="Nombre del artículo" style="width:100%;border:1px solid #e2e8f0;border-radius:5px;padding:5px 7px;font-size:12px;outline:none"></td>
+      <td style="padding:5px 6px"><input type="text" value="${i.unidad}" oninput="ocUpdateItem(${i.tempId},'unidad',this.value)" style="width:100%;border:1px solid #e2e8f0;border-radius:5px;padding:5px 7px;font-size:12px;outline:none"></td>
+      <td style="padding:5px 6px"><input type="number" inputmode="decimal" step="0.01" min="0" value="${(i.precio_unit||0).toFixed(2)}" placeholder="0.00" oninput="ocUpdateItem(${i.tempId},'precio_unit',this.value)" class="oc-input-decimal" style="width:100%;border:1px solid #e2e8f0;border-radius:5px;padding:5px 7px;font-size:12px;outline:none;text-align:right" onfocus="this.select()" onwheel="this.blur()"></td>
+      <td style="padding:5px 6px"><input type="number" inputmode="decimal" step="0.001" min="0" value="${i.cantidad}" placeholder="1" oninput="ocUpdateItem(${i.tempId},'cantidad',this.value)" class="oc-input-decimal" style="width:100%;border:1px solid #e2e8f0;border-radius:5px;padding:5px 7px;font-size:12px;outline:none;text-align:right" onfocus="this.select()" onwheel="this.blur()"></td>
+      <td style="padding:5px 6px;text-align:right;font-size:13px;font-weight:600;white-space:nowrap">${fL((i.precio_unit||0)*(i.cantidad||0))}</td>
+      <td style="padding:5px 6px;text-align:center"><button type="button" onclick="ocQuitarItem(${i.tempId})" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px">✕</button></td>
+    </tr>`).join('');
+  ocRecalcularTotales();
+}
+
+function ocRecalcularTotales() {
+  const subtotal = ocItemsTemp.reduce((s,i) => s + (i.precio_unit||0)*(i.cantidad||0), 0);
+  document.getElementById('oc-total-bruto').textContent     = fL(subtotal);
+  document.getElementById('oc-total-impuesto').textContent  = fL(0);
+  document.getElementById('oc-total-descuento').textContent = fL(0);
+  document.getElementById('oc-total-general').textContent   = fL(subtotal);
+}
+
+async function guardarOrdenCompra() {
+  const cliente_id = document.getElementById('oc-cliente')?.value;
+  if (!cliente_id) { alert('Seleccioná un cliente.'); return; }
+
+  const itemsValidos = ocItemsTemp.filter(i => i.nombre && i.nombre.trim());
+  if (itemsValidos.length === 0) { alert('Agregá al menos un artículo con nombre.'); return; }
+
+  const payload = {
+    cliente_id,
+    emision: document.getElementById('oc-emision')?.value || todayHN(),
+    vence: document.getElementById('oc-vence')?.value || todayHN(),
+    condicion: document.getElementById('oc-condicion')?.value || 'CONTADO',
+    nota: document.getElementById('oc-nota')?.value || '',
+    emitido_por: document.getElementById('oc-emitido-por')?.value || '',
+    items: itemsValidos.map(i => ({
+      codigo: i.codigo, nombre: i.nombre, unidad: i.unidad,
+      precio_unit: i.precio_unit, cantidad: i.cantidad
+    }))
+  };
+
+  try {
+    const r = await POST('/ordenes_compra', payload);
+    closeModal('oc-modal');
+    await renderOrdenCompra();
+    // Imprimir inmediatamente la orden recién creada
+    const ordenCompleta = await GET('/ordenes_compra/' + r.id);
+    printOrdenCompra(ordenCompleta);
+  } catch(e) {
+    alert('Error al guardar la orden: ' + e.message);
+  }
+}
+
+async function reimprimirOrdenCompra(id) {
+  try {
+    const orden = await GET('/ordenes_compra/' + id);
+    printOrdenCompra(orden);
+  } catch(e) {
+    alert('Error al cargar la orden: ' + e.message);
+  }
+}
+
+/** Genera e imprime el documento de Orden de Compra, formato idéntico a la plantilla de Agencia Aduanera Trejo */
+function printOrdenCompra(o) {
+  const b = BRANCH || {};
+  const logoSrc = b.logo || '';
+
+  const itemsHTML = (o.items||[]).map(i => `
+    <tr>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;font-size:12px">${i.codigo||''}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;font-size:12px">${i.nombre||''}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;font-size:12px">${i.unidad||''}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;font-size:12px;text-align:right">${(i.precio_unit||0).toFixed(2)}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;font-size:12px;text-align:right">${(i.cantidad||0).toFixed(3)}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;font-size:12px;text-align:right">${((i.precio_unit||0)*(i.cantidad||0)).toFixed(2)}</td>
+    </tr>`).join('');
+
+  const totalLetras = moneyToWords(o.total_general||0);
+
+  openPrint(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Orden de Compra ${o.numero_orden}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:Arial,Helvetica,sans-serif}
+body{font-size:12px;padding:18px;background:#fff;color:#1a1a1a}
+@media print{@page{size:letter portrait;margin:10mm}body{padding:0}}
+.iw{max-width:780px;margin:0 auto}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:10px;margin-bottom:8px}
+.hdr-left{display:flex;align-items:flex-start;gap:12px}
+.logo-circle{width:58px;height:58px;border-radius:50%;object-fit:cover;flex-shrink:0}
+.co-name{font-size:16px;font-weight:800;color:#1a1a1a}
+.co-sub{font-size:11px;color:#444;margin-top:2px}
+.co-email{font-size:11px;color:#444;margin-top:6px}
+.badge-title{font-size:19px;font-weight:800;text-align:right;color:#1a1a1a;line-height:1.2}
+.badge-num{font-size:20px;font-weight:800;color:#c0392b;text-align:right;margin-top:4px}
+.box{border:1px solid #333;margin-bottom:0}
+.row-boxes{display:flex;gap:0;margin-bottom:14px}
+.cliente-box{flex:1;border:1px solid #333}
+.cliente-box .r{border-bottom:1px solid #333;padding:6px 10px;font-size:11.5px}
+.cliente-box .r:last-child{border-bottom:none}
+.cliente-box b{font-weight:700}
+.meta-box{width:230px;border:1px solid #333;border-left:none}
+.meta-row{display:flex;border-bottom:1px solid #333}
+.meta-row > div{flex:1;text-align:center;padding:6px 4px;font-size:11px;font-weight:700;border-right:1px solid #333}
+.meta-row > div:last-child{border-right:none}
+.meta-val{display:flex;border-bottom:1px solid #333}
+.meta-val > div{flex:1;text-align:center;padding:6px 4px;font-size:12px;border-right:1px solid #333}
+.meta-val > div:last-child{border-right:none}
+.meta-full{text-align:center;padding:8px 4px;font-size:13px;font-weight:700}
+.items-table{width:100%;border-collapse:collapse;margin-bottom:18px}
+.items-table thead th{background:#f1f1f1;padding:7px 10px;font-size:11px;font-weight:700;text-align:left;border-top:1px solid #888;border-bottom:1px solid #888}
+.items-table thead th.r{text-align:right}
+.nota-totales{display:flex;gap:0;margin-bottom:10px}
+.nota-box{flex:1;border:1px solid #333;padding:8px 10px;font-size:11px}
+.tot-box{width:280px;border:1px solid #333;border-left:none}
+.tot-row{display:flex;border-bottom:1px solid #333}
+.tot-row:last-child{border-bottom:none}
+.tot-row > div{flex:1;padding:6px 10px;font-size:12px;border-right:1px solid #333}
+.tot-row > div:last-child{border-right:none;text-align:right;font-weight:700}
+.tot-row.gen{background:#fafafa}
+.tot-row.gen div{font-weight:800;font-size:13px}
+.son-line{font-size:12px;margin-bottom:18px}
+.firmas{display:flex;gap:24px;margin-top:30px}
+.firma-box{flex:1;border:1px solid #333;padding:8px 10px;font-size:11px;min-height:50px}
+</style></head><body><div class="iw">
+
+<div class="hdr">
+  <div class="hdr-left">
+    ${logoSrc?`<img src="${logoSrc}" class="logo-circle"/>`:``}
+    <div>
+      <div class="co-name">${b.nombre||'AGENCIA ADUANERA'}</div>
+      <div class="co-sub">RTN: ${b.rtn||''} &nbsp;/&nbsp;</div>
+      <div class="co-sub">${b.direccion||''} ${b.telefono?`telf. ${b.telefono}`:''} &nbsp;fax :</div>
+      <div class="co-email">e-mail: ${b.email||''}</div>
+    </div>
+  </div>
+  <div>
+    <div class="badge-title">ORDEN DE<br>COMPRA</div>
+    <div class="badge-num">${o.numero_orden}</div>
+  </div>
+</div>
+
+<div class="row-boxes">
+  <div class="cliente-box">
+    <div class="r"><b>Cliente:</b> ${o.cliente_nombre||''}</div>
+    <div class="r">RTN: ${o.cliente_rtn||''} &nbsp;/&nbsp;</div>
+    <div class="r"><b>Domicilio fiscal:</b> ${o.cliente_direccion||''}</div>
+    <div class="r"><b>Teléfonos:</b> ${o.cliente_telefono||''}</div>
+    <div class="r"><b>Fax:</b></div>
+    <div class="r"><b>Persona contacto:</b></div>
+  </div>
+  <div class="meta-box">
+    <div class="meta-row"><div>Emisión</div><div>Vence</div></div>
+    <div class="meta-val"><div>${fD(o.emision)}</div><div>${fD(o.vence)}</div></div>
+    <div class="meta-row"><div>Orden #</div><div>Página:</div></div>
+    <div class="meta-val"><div></div><div>${o.pagina||'001'}</div></div>
+    <div class="meta-full">${o.condicion||'CONTADO'}</div>
+  </div>
+</div>
+
+<table class="items-table">
+<thead><tr>
+  <th style="width:70px">Código</th>
+  <th>Nombre del artículo</th>
+  <th style="width:80px">Unidad</th>
+  <th class="r" style="width:100px">Precio Unitario</th>
+  <th class="r" style="width:80px">Cantidad</th>
+  <th class="r" style="width:100px">Total neto</th>
+</tr></thead>
+<tbody>${itemsHTML}</tbody>
+</table>
+
+<div class="nota-totales">
+  <div class="nota-box"><b>Nota:</b><br>${o.nota||''}</div>
+  <div class="tot-box">
+    <div class="tot-row"><div>Total Bruto:</div><div>L ${(o.subtotal||0).toFixed(2)}</div></div>
+    <div class="tot-row"><div>Total Impuesto:</div><div>L ${(o.total_impuesto||0).toFixed(2)}</div></div>
+    <div class="tot-row"><div>Total Descuento:</div><div>L ${(o.total_descuento||0).toFixed(2)}</div></div>
+    <div class="tot-row gen"><div>TOTAL GENERAL</div><div>L ${(o.total_general||0).toFixed(2)}</div></div>
+  </div>
+</div>
+
+<div class="son-line">Son: L ${totalLetras}</div>
+
+<div class="firmas">
+  <div class="firma-box"><b>Emitido por:</b><br><br><div style="text-align:center">${o.emitido_por||''}</div></div>
+  <div class="firma-box"><b>Aprobado por:</b><br><br><div style="text-align:center">${o.aprobado_por||''}</div></div>
+</div>
+
+</div></body></html>`, "Orden de Compra");
+}
+
 // ─── BANCOS ───────────────────────────────────────────────────────────────────
-let bancos_cache = [];
 let editingBanco = null;
 
 async function renderBancos() {
@@ -3119,7 +3493,6 @@ async function reporteConsolidacionBancaria() {
 }
 
 // ─── IMPUESTOS ────────────────────────────────────────────────────────────────
-let impuestos_cache = [];
 let editingImpuesto = null;
 
 async function renderImpuestos() {
@@ -3710,8 +4083,9 @@ function reimprimirVenta(v) {
     ordenCompraExenta: v.orden_compra_exenta||'',
     constanciaRegistro: v.constancia_registro||'',
     identificativoSAG: v.identificativo_sag||'',
-    // Datos aduaneros no se conservan en la tabla ventas; se imprimen vacíos en la reimpresión
-    aduanaPoliza: '', aduanaDocTransporte: '', aduanaValorCIF: '', aduanaNumContenedor: '',
+    // Datos aduaneros — ahora se persisten en la tabla ventas y se recuperan aquí
+    aduanaPoliza: v.aduana_poliza||'', aduanaDocTransporte: v.aduana_doc_transporte||'',
+    aduanaValorCIF: v.aduana_valor_cif||'', aduanaNumContenedor: v.aduana_num_contenedor||'',
     // CAI/rango propios de la serie original del documento
     serieCai: v.serieCai||'', serieRangoIni: v.serieRangoIni||'',
     serieRangoFin: v.serieRangoFin||'', serieFechaLimite: v.serieFechaLimite||'',

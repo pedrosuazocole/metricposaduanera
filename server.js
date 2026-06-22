@@ -263,6 +263,11 @@ function createSchema(){
   db.run(`CREATE INDEX IF NOT EXISTS idx_ventas_fecha ON ventas(fecha)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_ventas_suc ON ventas(sucursal_id)`);
   db.run(`CREATE TABLE IF NOT EXISTS venta_items(id INTEGER PRIMARY KEY AUTOINCREMENT,venta_id TEXT,producto_id TEXT,producto_codigo TEXT,producto_nombre TEXT,producto_categoria TEXT,cantidad INTEGER,precio_unit REAL,costo_unit REAL DEFAULT 0,subtotal REAL)`);
+  // ── ÓRDENES DE COMPRA — documento administrativo interno, sin ISV/CAI ──────
+  db.run(`CREATE TABLE IF NOT EXISTS ordenes_compra(id TEXT PRIMARY KEY,numero_orden TEXT,sucursal_id TEXT,cliente_id TEXT,usuario_id TEXT,emision TEXT,vence TEXT,condicion TEXT DEFAULT 'CONTADO',pagina TEXT DEFAULT '001',subtotal REAL DEFAULT 0,total_impuesto REAL DEFAULT 0,total_descuento REAL DEFAULT 0,total_general REAL DEFAULT 0,nota TEXT,emitido_por TEXT,aprobado_por TEXT,estado TEXT DEFAULT 'emitida',fecha TEXT DEFAULT(datetime('now','-6 hours')))`);
+  db.run(`CREATE TABLE IF NOT EXISTS orden_compra_items(id INTEGER PRIMARY KEY AUTOINCREMENT,orden_id TEXT,codigo TEXT,nombre TEXT,unidad TEXT,precio_unit REAL,cantidad REAL,subtotal REAL)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_oc_fecha ON ordenes_compra(fecha)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_oc_suc ON ordenes_compra(sucursal_id)`);
   db.run(`CREATE TABLE IF NOT EXISTS devoluciones(id TEXT PRIMARY KEY,venta_id TEXT,sucursal_id TEXT,usuario_id TEXT,motivo TEXT,total REAL DEFAULT 0,fecha TEXT DEFAULT(datetime('now','-6 hours')))`);
   db.run(`CREATE TABLE IF NOT EXISTS devolucion_items(id INTEGER PRIMARY KEY AUTOINCREMENT,devolucion_id TEXT,producto_id TEXT,cantidad INTEGER,precio_unit REAL,subtotal REAL)`);
   db.run(`CREATE TABLE IF NOT EXISTS compras(id TEXT PRIMARY KEY,proveedor_id TEXT,sucursal_id TEXT,usuario_id TEXT,numero_doc TEXT,subtotal REAL,isv REAL DEFAULT 0,total REAL,estado TEXT DEFAULT 'pendiente',notas TEXT,fecha TEXT DEFAULT(datetime('now','-6 hours')))`);
@@ -423,6 +428,11 @@ function createSchema(){
   try { db.run(`ALTER TABLE ventas ADD COLUMN serie_id TEXT`); } catch(e) {}
   try { db.run(`ALTER TABLE series_factura ADD COLUMN nombre TEXT`); } catch(e) {}
   try { db.run(`ALTER TABLE series_factura ADD COLUMN tipo TEXT DEFAULT 'factura'`); } catch(e) {}
+  // ── DATOS ADUANEROS — se guardan en la venta para poder reimprimirlos luego ──
+  try { db.run(`ALTER TABLE ventas ADD COLUMN aduana_poliza TEXT`); } catch(e) {}
+  try { db.run(`ALTER TABLE ventas ADD COLUMN aduana_doc_transporte TEXT`); } catch(e) {}
+  try { db.run(`ALTER TABLE ventas ADD COLUMN aduana_valor_cif TEXT`); } catch(e) {}
+  try { db.run(`ALTER TABLE ventas ADD COLUMN aduana_num_contenedor TEXT`); } catch(e) {}
   // Asegurar categoría Servicios e impuesto Exento en instalaciones existentes
   try { db.run(`INSERT OR IGNORE INTO categorias(nombre)VALUES('Servicios')`); } catch(e){}
   try {
@@ -709,6 +719,109 @@ app.get('/api/ventas',auth(),(req,res)=>{
 });
 app.get('/api/ventas/:id/items',auth(),(req,res)=>res.json(all(`SELECT * FROM venta_items WHERE venta_id=?`,[req.params.id])));
 
+// ══════════════════════════════════════════════════════════════════════════
+//  ÓRDENES DE COMPRA — documento administrativo interno (sin ISV/CAI/SAR)
+// ══════════════════════════════════════════════════════════════════════════
+
+// Listar órdenes de la sucursal (más recientes primero)
+app.get('/api/ordenes_compra',auth(),(req,res)=>{
+  const suc = req.user.sucursal_id;
+  const ordenes = all(`SELECT o.*, c.nombre as cliente_nombre, c.rtn as cliente_rtn, c.direccion as cliente_direccion, c.telefono as cliente_telefono
+                       FROM ordenes_compra o LEFT JOIN clientes c ON c.id=o.cliente_id
+                       WHERE o.sucursal_id=? ORDER BY o.fecha DESC LIMIT 200`,[suc]);
+  res.json(ordenes);
+});
+
+// Obtener una orden específica con sus ítems
+app.get('/api/ordenes_compra/:id',auth(),(req,res)=>{
+  const o = get(`SELECT o.*, c.nombre as cliente_nombre, c.rtn as cliente_rtn, c.direccion as cliente_direccion, c.telefono as cliente_telefono
+                 FROM ordenes_compra o LEFT JOIN clientes c ON c.id=o.cliente_id
+                 WHERE o.id=?`,[req.params.id]);
+  if(!o) return res.status(404).json({error:'Orden no encontrada'});
+  const items = all(`SELECT * FROM orden_compra_items WHERE orden_id=? ORDER BY id ASC`,[req.params.id]);
+  res.json({...o, items});
+});
+
+// Buscar órdenes por número (parcial) y/o rango de fechas — para reimpresión
+app.get('/api/ordenes_compra/buscar_reimpresion',auth(),(req,res)=>{
+  const suc = req.user.sucursal_id;
+  const { numero, fecha_ini, fecha_fin } = req.query;
+  const numeroLimpio = (numero||'').trim();
+  if(!numeroLimpio && !fecha_ini && !fecha_fin){
+    return res.status(400).json({error:'Debe indicar un número de orden o un rango de fechas'});
+  }
+  let sql = `SELECT o.*, c.nombre as cliente_nombre, c.rtn as cliente_rtn, c.direccion as cliente_direccion, c.telefono as cliente_telefono
+             FROM ordenes_compra o LEFT JOIN clientes c ON c.id=o.cliente_id WHERE o.sucursal_id=?`;
+  const params=[suc];
+  if(numeroLimpio){ sql+=` AND o.numero_orden LIKE ?`; params.push('%'+numeroLimpio+'%'); }
+  if(fecha_ini){ sql+=` AND date(o.fecha)>=?`; params.push(fecha_ini); }
+  if(fecha_fin){ sql+=` AND date(o.fecha)<=?`; params.push(fecha_fin); }
+  sql+=` ORDER BY o.fecha DESC LIMIT 100`;
+  const ordenes = all(sql,params);
+  const resultado = ordenes.map(o=>({
+    ...o,
+    items: all(`SELECT * FROM orden_compra_items WHERE orden_id=? ORDER BY id ASC`,[o.id])
+  }));
+  res.json(resultado);
+});
+
+// Crear una nueva Orden de Compra
+app.post('/api/ordenes_compra',auth(),(req,res)=>{
+  const{cliente_id,emision,vence,condicion,items,nota,emitido_por,aprobado_por}=req.body;
+  const suc=req.user.sucursal_id;
+  if(!items||!items.length) return res.status(400).json({error:'Debe agregar al menos un artículo'});
+
+  // Correlativo propio de Órdenes de Compra (formato 0000-XXXX), independiente del SAR
+  const lastOC = get(`SELECT numero_orden FROM ordenes_compra WHERE sucursal_id=? ORDER BY fecha DESC LIMIT 1`,[suc]);
+  let nextNum = 1;
+  if(lastOC && lastOC.numero_orden){
+    const partes = lastOC.numero_orden.split('-');
+    const ultimo = parseInt(partes[partes.length-1]);
+    if(!isNaN(ultimo)) nextNum = ultimo+1;
+  }
+  const numero_orden = `0000-${String(nextNum).padStart(4,'0')}`;
+
+  const subtotal = items.reduce((s,i)=>s+(parseFloat(i.precio_unit)||0)*(parseFloat(i.cantidad)||0),0);
+  const total_impuesto = 0; // Las Órdenes de Compra de Agencia Aduanera no llevan ISV
+  const total_descuento = 0;
+  const total_general = subtotal - total_descuento + total_impuesto;
+
+  const id=uuid();
+  db.run(`INSERT INTO ordenes_compra(id,numero_orden,sucursal_id,cliente_id,usuario_id,emision,vence,condicion,pagina,subtotal,total_impuesto,total_descuento,total_general,nota,emitido_por,aprobado_por)VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [id,numero_orden,suc,cliente_id||null,req.user.id,emision||todayHN(),vence||emision||todayHN(),condicion||'CONTADO','001',subtotal,total_impuesto,total_descuento,total_general,nota||'',emitido_por||req.user.nombre||'',aprobado_por||'']);
+
+  for(const it of items){
+    const cant = parseFloat(it.cantidad)||0;
+    const precio = parseFloat(it.precio_unit)||0;
+    db.run(`INSERT INTO orden_compra_items(orden_id,codigo,nombre,unidad,precio_unit,cantidad,subtotal)VALUES(?,?,?,?,?,?,?)`,
+      [id,it.codigo||'',it.nombre||'',it.unidad||'',precio,cant,precio*cant]);
+  }
+  saveDB();
+  res.json({id,numero_orden,total_general});
+});
+
+// Actualizar estado / nota / aprobado_por de una orden existente
+app.put('/api/ordenes_compra/:id',auth(['admin','supervisor']),(req,res)=>{
+  const{estado,nota,aprobado_por}=req.body;
+  const o=get(`SELECT id FROM ordenes_compra WHERE id=? AND sucursal_id=?`,[req.params.id,req.user.sucursal_id]);
+  if(!o) return res.status(404).json({error:'Orden no encontrada'});
+  if(estado!==undefined) run(`UPDATE ordenes_compra SET estado=? WHERE id=?`,[estado,req.params.id]);
+  if(nota!==undefined) run(`UPDATE ordenes_compra SET nota=? WHERE id=?`,[nota,req.params.id]);
+  if(aprobado_por!==undefined) run(`UPDATE ordenes_compra SET aprobado_por=? WHERE id=?`,[aprobado_por,req.params.id]);
+  saveDB();
+  res.json({ok:1});
+});
+
+// Eliminar (anular) una orden
+app.delete('/api/ordenes_compra/:id',auth(['admin','supervisor']),(req,res)=>{
+  const o=get(`SELECT id FROM ordenes_compra WHERE id=? AND sucursal_id=?`,[req.params.id,req.user.sucursal_id]);
+  if(!o) return res.status(404).json({error:'Orden no encontrada'});
+  run(`DELETE FROM orden_compra_items WHERE orden_id=?`,[req.params.id]);
+  run(`DELETE FROM ordenes_compra WHERE id=?`,[req.params.id]);
+  saveDB();
+  res.json({ok:1});
+});
+
 // ── BUSCAR VENTA PARA REIMPRESIÓN (Factura o Nota de Débito) ────────────────
 // Busca por número de factura exacto o parcial, devuelve todo lo necesario
 // para reconstruir e imprimir el documento (items, cliente, serie/CAI propio).
@@ -765,7 +878,7 @@ app.get('/api/ventas/buscar_reimpresion',auth(),(req,res)=>{
   res.json(resultado);
 });
 app.post('/api/ventas',auth(),(req,res)=>{
-  const{cliente_id,items,subtotal,descuento,importe_gravado,importe_exento,importe_exonerado,isv15,isv18,total,exonerado,orden_compra_exenta,constancia_registro,identificativo_sag,forma_pago,monto_recibido,cambio,turno_id,banco_id,serie_id}=req.body;
+  const{cliente_id,items,subtotal,descuento,importe_gravado,importe_exento,importe_exonerado,isv15,isv18,total,exonerado,orden_compra_exenta,constancia_registro,identificativo_sag,forma_pago,monto_recibido,cambio,turno_id,banco_id,serie_id,aduana_poliza,aduana_doc_transporte,aduana_valor_cif,aduana_num_contenedor}=req.body;
   const suc=req.user.sucursal_id;
   const sucursal=get(`SELECT * FROM sucursales WHERE id=?`,[suc]);
   if(!sucursal)return res.status(400).json({error:'Sucursal no encontrada'});
@@ -796,7 +909,7 @@ app.post('/api/ventas',auth(),(req,res)=>{
   }
   const numero_factura=`${serieLimpia}-${String(nextNum).padStart(8,'0')}`;
   const id=uuid();
-  db.run(`INSERT INTO ventas(id,numero_factura,sucursal_id,cliente_id,usuario_id,subtotal,descuento,importe_gravado,importe_exento,importe_exonerado,isv15,isv18,total,exonerado,orden_compra_exenta,constancia_registro,identificativo_sag,forma_pago,monto_recibido,cambio,turno_id,serie_id)VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[id,numero_factura,suc,cliente_id,req.user.id,subtotal,descuento||0,importe_gravado||0,importe_exento||0,importe_exonerado||0,isv15||0,isv18||0,total,exonerado?1:0,orden_compra_exenta||'',constancia_registro||'',identificativo_sag||'',forma_pago||'efectivo',monto_recibido||0,cambio||0,turno_id||null,serie_id||null]);
+  db.run(`INSERT INTO ventas(id,numero_factura,sucursal_id,cliente_id,usuario_id,subtotal,descuento,importe_gravado,importe_exento,importe_exonerado,isv15,isv18,total,exonerado,orden_compra_exenta,constancia_registro,identificativo_sag,forma_pago,monto_recibido,cambio,turno_id,serie_id,aduana_poliza,aduana_doc_transporte,aduana_valor_cif,aduana_num_contenedor)VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[id,numero_factura,suc,cliente_id,req.user.id,subtotal,descuento||0,importe_gravado||0,importe_exento||0,importe_exonerado||0,isv15||0,isv18||0,total,exonerado?1:0,orden_compra_exenta||'',constancia_registro||'',identificativo_sag||'',forma_pago||'efectivo',monto_recibido||0,cambio||0,turno_id||null,serie_id||null,aduana_poliza||'',aduana_doc_transporte||'',aduana_valor_cif||'',aduana_num_contenedor||'']);
   for(const item of items){
     const prod=get(`SELECT costo FROM productos WHERE id=?`,[item.id]);
     db.run(`INSERT INTO venta_items(venta_id,producto_id,producto_codigo,producto_nombre,producto_categoria,cantidad,precio_unit,costo_unit,subtotal)VALUES(?,?,?,?,?,?,?,?,?)`,[id,item.id,item.codigo,item.nombre,item.categoria||'',item.cantidad,item.precio,prod?.costo||0,item.cantidad*item.precio]);

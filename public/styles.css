@@ -872,3 +872,15 @@ body {
 @media (display-mode: standalone) {
   body { padding-top: env(safe-area-inset-top, 0); }
 }
+
+/* ── Inputs decimales de Orden de Compra: ocultar spinner nativo ──────────
+   Permite escribir el precio/cantidad libremente con decimales sin las
+   flechas de incremento, que confunden y dan apariencia de "solo enteros" */
+.oc-input-decimal::-webkit-outer-spin-button,
+.oc-input-decimal::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.oc-input-decimal {
+  -moz-appearance: textfield;
+}

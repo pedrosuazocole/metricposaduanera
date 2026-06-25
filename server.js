@@ -761,8 +761,38 @@ app.put('/api/ventas/:ventaId/items/:itemId/gravado', auth(['admin','supervisor'
   run(`UPDATE venta_items SET gravado=?, tasa_isv=? WHERE id=?`,
     [gravado?1:0, tasa_isv||item.tasa_isv||15, req.params.itemId]);
 
-  // Recalcular los totales de la venta completa a partir de TODOS sus ítems actualizados
-  const todosItems = all(`SELECT * FROM venta_items WHERE venta_id=?`,[req.params.ventaId]);
+  _recalcularTotalesVenta(req.params.ventaId);
+  saveDB();
+  const ventaActualizada = get(`SELECT importe_gravado,importe_exento,isv15,isv18,total FROM ventas WHERE id=?`,[req.params.ventaId]);
+  res.json({ ok:true, ...ventaActualizada });
+});
+
+// ── CORRECCIÓN MASIVA — actualiza todos los ítems de una venta en una sola
+// llamada atómica. Evita el problema de recalcular el total parcialmente
+// cuando se corrigen varios ítems uno por uno con llamadas secuenciales.
+app.put('/api/ventas/:ventaId/items-batch', auth(['admin','supervisor']), (req,res) => {
+  const { items } = req.body; // [{ id, gravado, tasa_isv }, ...]
+  const venta = get(`SELECT * FROM ventas WHERE id=? AND sucursal_id=?`,[req.params.ventaId, req.user.sucursal_id]);
+  if (!venta) return res.status(404).json({error:'Venta no encontrada'});
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({error:'Debe enviar al menos un ítem'});
+
+  for (const it of items) {
+    const item = get(`SELECT id FROM venta_items WHERE id=? AND venta_id=?`,[it.id, req.params.ventaId]);
+    if (!item) continue; // ignora ítems que no pertenecen a esta venta
+    run(`UPDATE venta_items SET gravado=?, tasa_isv=? WHERE id=?`,
+      [it.gravado?1:0, it.tasa_isv||15, it.id]);
+  }
+
+  _recalcularTotalesVenta(req.params.ventaId);
+  saveDB();
+  const ventaActualizada = get(`SELECT importe_gravado,importe_exento,isv15,isv18,total FROM ventas WHERE id=?`,[req.params.ventaId]);
+  res.json({ ok:true, ...ventaActualizada });
+});
+
+/** Recalcula y guarda importe_gravado, importe_exento, isv15, isv18 y total de una venta a partir de sus ítems actuales */
+function _recalcularTotalesVenta(ventaId) {
+  const venta = get(`SELECT descuento FROM ventas WHERE id=?`,[ventaId]);
+  const todosItems = all(`SELECT * FROM venta_items WHERE venta_id=?`,[ventaId]);
   let importeGravado=0, importeExento=0, isv15=0, isv18=0;
   todosItems.forEach(i => {
     const base = (i.precio_unit||0) * (i.cantidad||0);
@@ -776,13 +806,10 @@ app.put('/api/ventas/:ventaId/items/:itemId/gravado', auth(['admin','supervisor'
       importeExento += base;
     }
   });
-  const nuevoTotal = importeGravado + importeExento + isv15 + isv18 - (venta.descuento||0);
-
+  const nuevoTotal = importeGravado + importeExento + isv15 + isv18 - (venta?.descuento||0);
   run(`UPDATE ventas SET importe_gravado=?, importe_exento=?, isv15=?, isv18=?, total=? WHERE id=?`,
-    [importeGravado, importeExento, isv15, isv18, nuevoTotal, req.params.ventaId]);
-  saveDB();
-  res.json({ ok:true, importeGravado, importeExento, isv15, isv18, total: nuevoTotal });
-});
+    [importeGravado, importeExento, isv15, isv18, nuevoTotal, ventaId]);
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 //  ÓRDENES DE COMPRA — documento administrativo interno (sin ISV/CAI/SAR)

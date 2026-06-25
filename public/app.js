@@ -4064,7 +4064,7 @@ async function buscarReimpresion() {
         <div style="display:flex;gap:6px;flex-shrink:0">
           <button onclick='abrirCorregirItems(${JSON.stringify(v).replace(/'/g,"&apos;")})'
             style="background:#fffbeb;color:#92400e;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">✏️ Corregir Ítems</button>
-          <button class="btn-primary" style="background:${colorAccent};white-space:nowrap" onclick='reimprimirVenta(${JSON.stringify(v).replace(/'/g,"&apos;")})'>🖨️ Reimprimir</button>
+          <button class="btn-primary" style="background:${colorAccent};white-space:nowrap" onclick="reimprimirVenta('${v.numero_factura}')">🖨️ Reimprimir</button>
         </div>
       </div>`).join('');
   } catch(e) {
@@ -4072,34 +4072,43 @@ async function buscarReimpresion() {
   }
 }
 
-function reimprimirVenta(v) {
-  // Reconstruye el objeto "sale" esperado por printCarta / printNotaDebito
-  const sale = {
-    numero_factura: v.numero_factura,
-    fecha: v.fecha,
-    cliente: v.cliente,
-    items: (v.items||[]).map(i => ({
-      codigo: i.codigo, nombre: i.nombre, categoria: i.categoria,
-      cantidad: i.cantidad, precio: i.precio, gravado: i.gravado, tasaIsv: i.tasaIsv
-    })),
-    importeGravado: v.importe_gravado||0,
-    isv: v.isv15||0, isv18: v.isv18||0,
-    descuento: v.descuento||0, total: v.total||0,
-    exonerado: !!v.exonerado,
-    ordenCompraExenta: v.orden_compra_exenta||'',
-    constanciaRegistro: v.constancia_registro||'',
-    identificativoSAG: v.identificativo_sag||'',
-    // Datos aduaneros — ahora se persisten en la tabla ventas y se recuperan aquí
-    aduanaPoliza: v.aduana_poliza||'', aduanaDocTransporte: v.aduana_doc_transporte||'',
-    aduanaValorCIF: v.aduana_valor_cif||'', aduanaNumContenedor: v.aduana_num_contenedor||'',
-    // CAI/rango propios de la serie original del documento
-    serieCai: v.serieCai||'', serieRangoIni: v.serieRangoIni||'',
-    serieRangoFin: v.serieRangoFin||'', serieFechaLimite: v.serieFechaLimite||'',
-  };
-  if (v.serieTipo === 'nota_debito' || reimpresionTipoActual === 'nota_debito') {
-    printNotaDebito(sale);
-  } else {
-    printCarta(sale);
+async function reimprimirVenta(numeroFactura) {
+  // Siempre se consulta el servidor justo antes de imprimir — nunca se usan
+  // datos embebidos en el botón, que podrían quedar obsoletos si la factura
+  // fue corregida después de que la lista se renderizó en pantalla.
+  try {
+    const qs = `numero=${encodeURIComponent(numeroFactura)}&tipo=${reimpresionTipoActual}`;
+    const resultados = await GET('/ventas/buscar_reimpresion', qs);
+    const v = (resultados||[]).find(r => r.numero_factura === numeroFactura) || resultados?.[0];
+    if (!v) { alert('No se pudo recuperar la factura actualizada.'); return; }
+
+    const sale = {
+      numero_factura: v.numero_factura,
+      fecha: v.fecha,
+      cliente: v.cliente,
+      items: (v.items||[]).map(i => ({
+        codigo: i.codigo, nombre: i.nombre, categoria: i.categoria,
+        cantidad: i.cantidad, precio: i.precio, gravado: i.gravado, tasaIsv: i.tasaIsv
+      })),
+      importeGravado: v.importe_gravado||0,
+      isv: v.isv15||0, isv18: v.isv18||0,
+      descuento: v.descuento||0, total: v.total||0,
+      exonerado: !!v.exonerado,
+      ordenCompraExenta: v.orden_compra_exenta||'',
+      constanciaRegistro: v.constancia_registro||'',
+      identificativoSAG: v.identificativo_sag||'',
+      aduanaPoliza: v.aduana_poliza||'', aduanaDocTransporte: v.aduana_doc_transporte||'',
+      aduanaValorCIF: v.aduana_valor_cif||'', aduanaNumContenedor: v.aduana_num_contenedor||'',
+      serieCai: v.serieCai||'', serieRangoIni: v.serieRangoIni||'',
+      serieRangoFin: v.serieRangoFin||'', serieFechaLimite: v.serieFechaLimite||'',
+    };
+    if (v.serieTipo === 'nota_debito' || reimpresionTipoActual === 'nota_debito') {
+      printNotaDebito(sale);
+    } else {
+      printCarta(sale);
+    }
+  } catch(e) {
+    alert('Error al recuperar la factura: ' + e.message);
   }
 }
 
@@ -4180,9 +4189,12 @@ async function guardarCorreccionItems() {
     return;
   }
   try {
-    for (const i of ciItemsEditables) {
-      await PUT(`/ventas/${ciVentaActual.id}/items/${i.id}/gravado`, { gravado: i.gravado, tasa_isv: i.tasaIsv });
-    }
+    // Una sola llamada atómica con TODOS los ítems — evita que el total quede
+    // calculado con un estado intermedio si se mandaran uno por uno.
+    const payload = {
+      items: ciItemsEditables.map(i => ({ id: i.id, gravado: i.gravado, tasa_isv: i.tasaIsv }))
+    };
+    await PUT(`/ventas/${ciVentaActual.id}/items-batch`, payload);
     showToastMsg('✅ Factura corregida correctamente');
     closeModal('corregir-items-modal');
     buscarReimpresion(); // refrescar la lista con los nuevos totales

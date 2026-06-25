@@ -416,6 +416,29 @@ function createSchema(){
     activo INTEGER DEFAULT 1,
     creado TEXT DEFAULT(datetime('now','-6 hours'))
   )`);
+  // ── RESUMEN SEMANAL — CallMeBot (gratuito) ───────────────────────────────
+  // Cada destinatario tiene su propia API Key de CallMeBot (se obtiene gratis
+  // activando el bot desde el WhatsApp de cada número, ver instrucciones en UI).
+  db.run(`CREATE TABLE IF NOT EXISTS resumen_semanal_destinatarios(
+    id TEXT PRIMARY KEY,
+    sucursal_id TEXT NOT NULL,
+    nombre TEXT NOT NULL,
+    numero TEXT NOT NULL,
+    callmebot_apikey TEXT NOT NULL,
+    activo INTEGER DEFAULT 1,
+    creado TEXT DEFAULT(datetime('now','-6 hours'))
+  )`);
+  // Control de envíos automáticos ya realizados, para no duplicar en el mismo minuto/semana
+  db.run(`CREATE TABLE IF NOT EXISTS resumen_semanal_log(
+    id TEXT PRIMARY KEY,
+    sucursal_id TEXT NOT NULL,
+    semana_clave TEXT NOT NULL,
+    tipo TEXT NOT NULL,
+    enviado_a TEXT,
+    ok INTEGER DEFAULT 1,
+    detalle TEXT,
+    fecha TEXT DEFAULT(datetime('now','-6 hours'))
+  )`);
   // Migración para BD existentes
   try { db.run(`ALTER TABLE whatsapp_numeros ADD COLUMN callmebot_apikey TEXT`); } catch(e) {}
   try { db.run(`ALTER TABLE turnos ADD COLUMN turno_letra TEXT DEFAULT 'A'`); } catch(e) {}
@@ -433,6 +456,11 @@ function createSchema(){
   try { db.run(`ALTER TABLE ventas ADD COLUMN aduana_doc_transporte TEXT`); } catch(e) {}
   try { db.run(`ALTER TABLE ventas ADD COLUMN aduana_valor_cif TEXT`); } catch(e) {}
   try { db.run(`ALTER TABLE ventas ADD COLUMN aduana_num_contenedor TEXT`); } catch(e) {}
+  // ── GRAVADO POR ÍTEM — se guarda el estado real de exención de cada artículo ──
+  // Antes este dato no se persistía y al reimprimir siempre se asumía "gravado",
+  // mostrando ISV incluso en artículos exentos (ej: Formularios DUA, DEVA).
+  try { db.run(`ALTER TABLE venta_items ADD COLUMN gravado INTEGER DEFAULT 1`); } catch(e) {}
+  try { db.run(`ALTER TABLE venta_items ADD COLUMN tasa_isv REAL DEFAULT 15`); } catch(e) {}
   // Asegurar categoría Servicios e impuesto Exento en instalaciones existentes
   try { db.run(`INSERT OR IGNORE INTO categorias(nombre)VALUES('Servicios')`); } catch(e){}
   try {
@@ -865,8 +893,10 @@ app.get('/api/ventas/buscar_reimpresion',auth(),(req,res)=>{
       items: items.map(i => ({
         codigo: i.producto_codigo, nombre: i.producto_nombre, categoria: i.producto_categoria,
         cantidad: i.cantidad, precio: i.precio_unit,
-        // Se infiere si el ítem es gravado: si la venta tiene ISV y este item no fue marcado como exento explícitamente
-        gravado: (v.isv15>0 || v.isv18>0) ? 1 : 0
+        // Gravado real del ítem (columna agregada — ventas anteriores a este cambio
+        // no la tienen y caerán al valor DEFAULT 1, que es el comportamiento previo)
+        gravado: i.gravado !== undefined && i.gravado !== null ? i.gravado : 1,
+        tasaIsv: i.tasa_isv || 15
       })),
       serieCai: serieDatos.cai || '',
       serieRangoIni: serieDatos.rango_ini || '',
@@ -911,8 +941,13 @@ app.post('/api/ventas',auth(),(req,res)=>{
   const id=uuid();
   db.run(`INSERT INTO ventas(id,numero_factura,sucursal_id,cliente_id,usuario_id,subtotal,descuento,importe_gravado,importe_exento,importe_exonerado,isv15,isv18,total,exonerado,orden_compra_exenta,constancia_registro,identificativo_sag,forma_pago,monto_recibido,cambio,turno_id,serie_id,aduana_poliza,aduana_doc_transporte,aduana_valor_cif,aduana_num_contenedor)VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[id,numero_factura,suc,cliente_id,req.user.id,subtotal,descuento||0,importe_gravado||0,importe_exento||0,importe_exonerado||0,isv15||0,isv18||0,total,exonerado?1:0,orden_compra_exenta||'',constancia_registro||'',identificativo_sag||'',forma_pago||'efectivo',monto_recibido||0,cambio||0,turno_id||null,serie_id||null,aduana_poliza||'',aduana_doc_transporte||'',aduana_valor_cif||'',aduana_num_contenedor||'']);
   for(const item of items){
-    const prod=get(`SELECT costo FROM productos WHERE id=?`,[item.id]);
-    db.run(`INSERT INTO venta_items(venta_id,producto_id,producto_codigo,producto_nombre,producto_categoria,cantidad,precio_unit,costo_unit,subtotal)VALUES(?,?,?,?,?,?,?,?,?)`,[id,item.id,item.codigo,item.nombre,item.categoria||'',item.cantidad,item.precio,prod?.costo||0,item.cantidad*item.precio]);
+    const prod=get(`SELECT costo,gravado FROM productos WHERE id=?`,[item.id]);
+    // El estado de exención se toma del producto real en la BD (fuente de verdad).
+    // Si el ítem no corresponde a un producto existente (ej: ítem libre), se usa
+    // el valor que venga en el item del carrito como respaldo.
+    const gravadoReal = prod ? (prod.gravado ? 1 : 0) : (item.gravado ? 1 : 0);
+    const tasaReal = item.tasaIsv || 15;
+    db.run(`INSERT INTO venta_items(venta_id,producto_id,producto_codigo,producto_nombre,producto_categoria,cantidad,precio_unit,costo_unit,subtotal,gravado,tasa_isv)VALUES(?,?,?,?,?,?,?,?,?,?,?)`,[id,item.id,item.codigo,item.nombre,item.categoria||'',item.cantidad,item.precio,prod?.costo||0,item.cantidad*item.precio,gravadoReal,tasaReal]);
     ajustarStock(item.id,suc,item.cantidad,'venta',numero_factura,'Venta POS',req.user.id,prod?.costo||0,item.precio);
   }
   // Si la venta es a crédito, crear CxC automáticamente
@@ -1406,6 +1441,223 @@ app.post('/api/whatsapp/send', auth(), async (req, res) => {
     res.status(500).json({ error: e.message, ok: false });
   }
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+//  RESUMEN SEMANAL — CallMeBot (100% gratuito, solo texto)
+//  Envía cada Lunes 8:00am (hora Honduras) un resumen con el total de
+//  Facturas, Notas de Débito y Órdenes de Compra de los últimos 7 días.
+//  CallMeBot API: https://www.callmebot.com/blog/free-api-whatsapp-messages/
+//  GET https://api.callmebot.com/whatsapp.php?phone=+NUMERO&text=MENSAJE&apikey=APIKEY
+// ══════════════════════════════════════════════════════════════════════════
+async function _callmebotEnviar({ numero, apikey, mensaje }) {
+  const tel = numero.replace(/[^0-9]/g, '');
+  const url = `https://api.callmebot.com/whatsapp.php?phone=%2B${tel}&text=${encodeURIComponent(mensaje)}&apikey=${apikey}`;
+  const r = await fetch(url, { signal: AbortSignal.timeout(30000) });
+  const txt = await r.text();
+  console.log('CallMeBot respuesta:', txt.substring(0, 200));
+  return { status: txt };
+}
+
+/** Calcula el rango de los últimos 7 días (incluye hoy) en formato YYYY-MM-DD */
+function _rangoUltimaSemana() {
+  const hoy = new Date();
+  const hace7 = new Date(hoy.getTime() - 7*24*60*60*1000);
+  const fIni = hace7.toISOString().substring(0,10);
+  const fFin = hoy.toISOString().substring(0,10);
+  return { fIni, fFin };
+}
+
+/** Construye el texto del resumen semanal (Facturas + Notas de Débito + Órdenes de Compra) */
+function generarResumenSemanalTexto(sucursalId) {
+  const { fIni, fFin } = _rangoUltimaSemana();
+  const sucursal = get(`SELECT nombre FROM sucursales WHERE id=?`,[sucursalId]);
+  const nombreSuc = sucursal?.nombre || 'Mi Empresa';
+
+  // Facturas (tipo 'factura' o sin serie asociada = factura por defecto)
+  const facturas = all(
+    `SELECT v.numero_factura, v.total, v.fecha, c.nombre as cliente
+     FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id
+     WHERE v.sucursal_id=? AND date(v.fecha)>=? AND date(v.fecha)<=? AND v.estado!='anulada'
+       AND (v.serie_id IS NULL OR v.serie_id IN (SELECT id FROM series_factura WHERE tipo='factura' OR tipo IS NULL))
+     ORDER BY v.fecha ASC`,
+    [sucursalId, fIni, fFin]
+  );
+  // Notas de Débito (serie tipo 'nota_debito')
+  const notasDebito = all(
+    `SELECT v.numero_factura, v.total, v.fecha, c.nombre as cliente
+     FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id
+     WHERE v.sucursal_id=? AND date(v.fecha)>=? AND date(v.fecha)<=? AND v.estado!='anulada'
+       AND v.serie_id IN (SELECT id FROM series_factura WHERE tipo='nota_debito')
+     ORDER BY v.fecha ASC`,
+    [sucursalId, fIni, fFin]
+  );
+  // Órdenes de Compra
+  const ordenes = all(
+    `SELECT o.numero_orden, o.total_general, o.fecha, c.nombre as cliente
+     FROM ordenes_compra o LEFT JOIN clientes c ON c.id=o.cliente_id
+     WHERE o.sucursal_id=? AND date(o.fecha)>=? AND date(o.fecha)<=?
+     ORDER BY o.fecha ASC`,
+    [sucursalId, fIni, fFin]
+  );
+
+  const totalFacturas = facturas.reduce((s,f)=>s+(f.total||0),0);
+  const totalND       = notasDebito.reduce((s,n)=>s+(n.total||0),0);
+  const totalOC       = ordenes.reduce((s,o)=>s+(o.total_general||0),0);
+  const granTotal     = totalFacturas + totalND + totalOC;
+
+  const fmt = n => 'L. ' + (parseFloat(n)||0).toLocaleString('es-HN',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fechaCorta = f => { try { return new Date(f).toLocaleDateString('es-HN',{day:'2-digit',month:'2-digit'}); } catch(e){ return ''; } };
+
+  let msg = `📊 *RESUMEN SEMANAL — ${nombreSuc}*\n`;
+  msg += `🗓️ Del ${fechaCorta(fIni)} al ${fechaCorta(fFin)}\n\n`;
+
+  msg += `🧾 *FACTURAS* (${facturas.length})\n`;
+  if (facturas.length === 0) {
+    msg += `_Sin facturas en este período_\n`;
+  } else {
+    facturas.forEach(f => { msg += `• ${f.numero_factura} — ${f.cliente||'Consumidor Final'}: ${fmt(f.total)}\n`; });
+  }
+  msg += `*Subtotal Facturas: ${fmt(totalFacturas)}*\n\n`;
+
+  msg += `📋 *NOTAS DE DÉBITO* (${notasDebito.length})\n`;
+  if (notasDebito.length === 0) {
+    msg += `_Sin notas de débito en este período_\n`;
+  } else {
+    notasDebito.forEach(n => { msg += `• ${n.numero_factura} — ${n.cliente||'Consumidor Final'}: ${fmt(n.total)}\n`; });
+  }
+  msg += `*Subtotal Notas de Débito: ${fmt(totalND)}*\n\n`;
+
+  msg += `📦 *ÓRDENES DE COMPRA* (${ordenes.length})\n`;
+  if (ordenes.length === 0) {
+    msg += `_Sin órdenes de compra en este período_\n`;
+  } else {
+    ordenes.forEach(o => { msg += `• ${o.numero_orden} — ${o.cliente||'—'}: ${fmt(o.total_general)}\n`; });
+  }
+  msg += `*Subtotal Órdenes de Compra: ${fmt(totalOC)}*\n\n`;
+
+  msg += `💰 *TOTAL GENERAL DE LA SEMANA: ${fmt(granTotal)}*\n`;
+  msg += `_MetricPOS Aduanera — Reporte automático_`;
+
+  return msg;
+}
+
+/** Envía el resumen semanal a todos los destinatarios activos de la sucursal */
+async function enviarResumenSemanalASucursal(sucursalId, semanaClave) {
+  const destinatarios = all(`SELECT * FROM resumen_semanal_destinatarios WHERE sucursal_id=? AND activo=1`,[sucursalId]);
+  if (destinatarios.length === 0) return { enviados: 0, total: 0 };
+
+  const texto = generarResumenSemanalTexto(sucursalId);
+  let enviados = 0;
+  for (const d of destinatarios) {
+    try {
+      await _callmebotEnviar({ numero: d.numero, apikey: d.callmebot_apikey, mensaje: texto });
+      run(`INSERT INTO resumen_semanal_log(id,sucursal_id,semana_clave,tipo,enviado_a,ok,detalle)VALUES(?,?,?,?,?,?,?)`,
+        [uuid(), sucursalId, semanaClave, 'automatico', d.numero, 1, 'Enviado correctamente']);
+      enviados++;
+      // CallMeBot recomienda esperar unos segundos entre envíos si hay varios destinatarios
+      await new Promise(res => setTimeout(res, 3000));
+    } catch(e) {
+      run(`INSERT INTO resumen_semanal_log(id,sucursal_id,semana_clave,tipo,enviado_a,ok,detalle)VALUES(?,?,?,?,?,?,?)`,
+        [uuid(), sucursalId, semanaClave, 'automatico', d.numero, 0, e.message]);
+    }
+  }
+  saveDB();
+  return { enviados, total: destinatarios.length };
+}
+
+// ── CRUD de destinatarios (números con su API Key de CallMeBot) ─────────────
+app.get('/api/resumen-semanal/destinatarios', auth(), (req,res) => {
+  res.json(all(`SELECT * FROM resumen_semanal_destinatarios WHERE sucursal_id=? ORDER BY creado ASC`,[req.user.sucursal_id]));
+});
+app.post('/api/resumen-semanal/destinatarios', auth(['admin','supervisor']), (req,res) => {
+  const { nombre, numero, callmebot_apikey } = req.body;
+  if (!nombre || !numero || !callmebot_apikey) return res.status(400).json({error:'nombre, numero y callmebot_apikey son requeridos'});
+  const id = uuid();
+  run(`INSERT INTO resumen_semanal_destinatarios(id,sucursal_id,nombre,numero,callmebot_apikey)VALUES(?,?,?,?,?)`,
+    [id, req.user.sucursal_id, nombre, numero, callmebot_apikey]);
+  saveDB();
+  res.json({id});
+});
+app.put('/api/resumen-semanal/destinatarios/:id', auth(['admin','supervisor']), (req,res) => {
+  const { nombre, numero, callmebot_apikey, activo } = req.body;
+  const d = get(`SELECT id FROM resumen_semanal_destinatarios WHERE id=? AND sucursal_id=?`,[req.params.id, req.user.sucursal_id]);
+  if (!d) return res.status(404).json({error:'No encontrado'});
+  if (nombre!==undefined) run(`UPDATE resumen_semanal_destinatarios SET nombre=? WHERE id=?`,[nombre,req.params.id]);
+  if (numero!==undefined) run(`UPDATE resumen_semanal_destinatarios SET numero=? WHERE id=?`,[numero,req.params.id]);
+  if (callmebot_apikey!==undefined) run(`UPDATE resumen_semanal_destinatarios SET callmebot_apikey=? WHERE id=?`,[callmebot_apikey,req.params.id]);
+  if (activo!==undefined) run(`UPDATE resumen_semanal_destinatarios SET activo=? WHERE id=?`,[activo?1:0,req.params.id]);
+  saveDB();
+  res.json({ok:1});
+});
+app.delete('/api/resumen-semanal/destinatarios/:id', auth(['admin','supervisor']), (req,res) => {
+  run(`DELETE FROM resumen_semanal_destinatarios WHERE id=? AND sucursal_id=?`,[req.params.id, req.user.sucursal_id]);
+  saveDB();
+  res.json({ok:1});
+});
+
+// ── Vista previa del mensaje (sin enviar nada) ───────────────────────────────
+app.get('/api/resumen-semanal/preview', auth(), (req,res) => {
+  try {
+    const texto = generarResumenSemanalTexto(req.user.sucursal_id);
+    res.json({ texto });
+  } catch(e) { res.status(500).json({error:e.message}); }
+});
+
+// ── Envío manual inmediato (botón "Enviar Ahora") ────────────────────────────
+app.post('/api/resumen-semanal/enviar-ahora', auth(['admin','supervisor']), async (req,res) => {
+  try {
+    const semanaClave = 'MANUAL-' + nowHN();
+    const resultado = await enviarResumenSemanalASucursal(req.user.sucursal_id, semanaClave);
+    if (resultado.total === 0) {
+      return res.json({ ok:false, mensaje:'No hay destinatarios configurados con CallMeBot. Agrega al menos uno primero.' });
+    }
+    res.json({ ok:true, mensaje:`Enviado a ${resultado.enviados} de ${resultado.total} destinatario(s)` });
+  } catch(e) { res.status(500).json({ok:false, error:e.message}); }
+});
+
+// ── Log de envíos (para ver historial en la UI) ──────────────────────────────
+app.get('/api/resumen-semanal/log', auth(), (req,res) => {
+  res.json(all(`SELECT * FROM resumen_semanal_log WHERE sucursal_id=? ORDER BY fecha DESC LIMIT 50`,[req.user.sucursal_id]));
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SCHEDULER — verifica cada minuto si es Lunes 8:00am (hora Honduras, UTC-6)
+//  para disparar el envío automático del resumen semanal a todas las sucursales.
+//  No se usa node-cron para no agregar una dependencia nueva — un setInterval
+//  de 60s es suficientemente preciso para este caso de uso.
+// ══════════════════════════════════════════════════════════════════════════
+let _ultimaSemanaEnviada = {}; // { sucursal_id: "2026-W26" } — evita doble envío en el mismo minuto
+
+function _semanaISO(fecha) {
+  const d = new Date(fecha);
+  d.setHours(0,0,0,0);
+  d.setDate(d.getDate() + 3 - ((d.getDay()+6)%7)); // ajuste a jueves de esa semana ISO
+  const semana1 = new Date(d.getFullYear(),0,4);
+  const numSemana = 1 + Math.round(((d - semana1) / 86400000 - 3 + ((semana1.getDay()+6)%7)) / 7);
+  return `${d.getFullYear()}-W${String(numSemana).padStart(2,'0')}`;
+}
+
+setInterval(async () => {
+  try {
+    // Hora actual en Honduras (UTC-6), sin depender de timezone del servidor
+    const ahoraUTC = new Date();
+    const ahoraHN = new Date(ahoraUTC.getTime() - 6*60*60*1000);
+    const esLunes = ahoraHN.getDay() === 1; // 0=domingo, 1=lunes
+    const horaOk  = ahoraHN.getHours() === 8 && ahoraHN.getMinutes() === 0;
+    if (!esLunes || !horaOk) return;
+
+    const semanaClave = _semanaISO(ahoraHN);
+    const sucursales = all(`SELECT id FROM sucursales WHERE activa=1`);
+    for (const suc of sucursales) {
+      if (_ultimaSemanaEnviada[suc.id] === semanaClave) continue; // ya se envió esta semana
+      _ultimaSemanaEnviada[suc.id] = semanaClave;
+      await enviarResumenSemanalASucursal(suc.id, semanaClave);
+      console.log(`📊 Resumen semanal enviado automáticamente — sucursal ${suc.id}, semana ${semanaClave}`);
+    }
+  } catch(e) {
+    console.error('Error en scheduler de resumen semanal:', e.message);
+  }
+}, 60000); // revisa cada 60 segundos
 
 // Envío masivo al cerrar turno vía TextMeBot (con PDF adjunto)
 app.post('/api/whatsapp/send-turno', auth(), async (req, res) => {

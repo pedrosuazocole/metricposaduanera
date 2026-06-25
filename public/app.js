@@ -1920,7 +1920,8 @@ function printCarta(sale) {
   let importeExentoCalc = 0;
   const itemsHTML = sale.items.map(i => {
     const esGravado = !(i.gravado === 0 || i.gravado === false);
-    const isv_pct   = esGravado ? '15.00%' : '0.00%';
+    const tasaReal  = i.tasaIsv || 15;
+    const isv_pct   = esGravado ? tasaReal.toFixed(2)+'%' : '0.00%';
     const totalItem = (i.precio||0) * (i.cantidad||1);
     if (!esGravado) importeExentoCalc += totalItem;
     return `<tr>
@@ -2392,35 +2393,28 @@ function renderFacCart() {
     `).join('');
   }
 
+  // Subtotal = suma de precios base (sin ISV) de cada línea
   const subtotal = facCart.reduce((s,i) => s+i.precio*i.cantidad, 0);
   const discAmt = facDiscountType==='porcentaje' ? subtotal*(facDiscount/100) : facDiscount;
-  const afterDisc = subtotal - discAmt;
+  const baseNetaConDesc = subtotal - discAmt;
 
+  // El ISV se calcula SOBRE la base (precio_venta), no se extrae de un precio "todo incluido".
+  // Ej: precio_venta = 500, ISV 15% = 500*0.15 = 75 → línea final = 575.
   let isv15 = 0, isv18 = 0, isvOtros = 0;
   if (!facExonerado) {
     facCart.forEach(item => {
       if (!item.gravado) return;
       const tasa = item.tasaIsv || 15;
       const base = item.precio * item.cantidad;
-      const isvItem = base - base / (1 + tasa / 100);
+      const isvItem = base * (tasa / 100);
       if (tasa === 15) isv15 += isvItem;
       else if (tasa === 18) isv18 += isvItem;
       else isvOtros += isvItem;
     });
   }
 
-  // Total Neto = suma de precios base sin ISV
-  let baseNeta = 0;
-  facCart.forEach(item => {
-    const linea = item.precio * item.cantidad;
-    if (item.gravado && item.tasaIsv > 0) {
-      baseNeta += linea / (1 + item.tasaIsv / 100);
-    } else {
-      baseNeta += linea;
-    }
-  });
-  const totalNetoConDesc = baseNeta - (facDiscountType==='porcentaje' ? baseNeta*(facDiscount/100) : facDiscount);
-  let rowsHTML = `<div class="total-row-item"><span>Total Neto</span><span>L. ${totalNetoConDesc.toFixed(2)}</span></div>`;
+  // Total Neto = la base ya descontada (sin ISV) — se muestra antes de sumar el ISV
+  let rowsHTML = `<div class="total-row-item"><span>Total Neto</span><span>L. ${baseNetaConDesc.toFixed(2)}</span></div>`;
   if (discAmt > 0) rowsHTML += `<div class="total-row-item discount"><span>Descuento</span><span>-L. ${discAmt.toFixed(2)}</span></div>`;
   if (!facExonerado && isv15 > 0)   rowsHTML += `<div class="total-row-item"><span>ISV 15%</span><span>L. ${isv15.toFixed(2)}</span></div>`;
   if (!facExonerado && isv18 > 0)   rowsHTML += `<div class="total-row-item"><span>ISV 18%</span><span>L. ${isv18.toFixed(2)}</span></div>`;
@@ -2432,7 +2426,9 @@ function renderFacCart() {
       if (isvT > 0) rowsHTML += `<div class="total-row-item"><span>ISV ${t}%</span><span>L. ${isvT.toFixed(2)}</span></div>`;
     });
   }
-  rowsHTML += `<div class="total-row-item grand-total"><span>Total</span><span>L. ${afterDisc.toFixed(2)}</span></div>`;
+  // Total final = base neta con descuento + todo el ISV calculado encima
+  const totalConIsv = baseNetaConDesc + isv15 + isv18 + isvOtros;
+  rowsHTML += `<div class="total-row-item grand-total"><span>Total</span><span>L. ${totalConIsv.toFixed(2)}</span></div>`;
 
   // Forma de pago
   rowsHTML += `<div style="margin-top:10px;border-top:1px solid #e2e8f0;padding-top:10px">
@@ -2447,9 +2443,9 @@ function renderFacCart() {
     ${(facFormaPago==='transferencia'||facFormaPago==='tarjeta')?`<div style="margin-top:4px"><label style="font-size:11px;font-weight:600;color:#64748b">🏦 Banco receptor</label><select id="fac-banco-sel" style="width:100%;border:1px solid #e2e8f0;border-radius:8px;padding:6px 10px;font-size:12px;outline:none;margin-top:4px;box-sizing:border-box"><option value="">— Seleccionar banco —</option>${fac_bancos_cache.map(b=>`<option value="${b.id}">${b.nombre}${b.numero_cuenta?' — '+b.numero_cuenta:''} (L. ${(b.saldo_actual||0).toFixed(2)})</option>`).join('')}</select></div>`:''}
     ${facFormaPago==='efectivo'?`<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
       <label style="font-size:11px;color:#64748b;white-space:nowrap">Recibido:</label>
-      <input type="number" id="fac-monto-recibido" value="${facMontoRecibido||afterDisc.toFixed(2)}" step="0.01" min="${afterDisc.toFixed(2)}" onchange="calcFacCambio(${afterDisc})" style="flex:1;border:1px solid #e2e8f0;border-radius:6px;padding:5px 8px;font-size:12px;outline:none">
+      <input type="number" id="fac-monto-recibido" value="${facMontoRecibido||totalConIsv.toFixed(2)}" step="0.01" min="${totalConIsv.toFixed(2)}" onchange="calcFacCambio(${totalConIsv})" style="flex:1;border:1px solid #e2e8f0;border-radius:6px;padding:5px 8px;font-size:12px;outline:none">
     </div>
-    <div style="font-size:12px;font-weight:700;color:#059669">Cambio: L. ${Math.max(0,(facMontoRecibido||afterDisc)-afterDisc).toFixed(2)}</div>`:''}
+    <div style="font-size:12px;font-weight:700;color:#059669">Cambio: L. ${Math.max(0,(facMontoRecibido||totalConIsv)-totalConIsv).toFixed(2)}</div>`:''}
   </div>`;
 
   document.getElementById('fac-totals-rows').innerHTML = rowsHTML;
@@ -2481,23 +2477,25 @@ async function processFacInvoice() {
   }
   const subtotal = facCart.reduce((s,i) => s+i.precio*i.cantidad, 0);
   const discAmt = facDiscountType==='porcentaje' ? subtotal*(facDiscount/100) : facDiscount;
-  const afterDisc = subtotal - discAmt;
+  const baseNetaConDesc = subtotal - discAmt;
 
+  // El ISV se suma SOBRE el precio_venta (base neta) — no se extrae de un precio "todo incluido"
   let isv15 = 0, isv18 = 0, importeGravado = 0;
   if (!facExonerado) {
     facCart.forEach(item => {
       if (!item.gravado) return;
       const tasa = item.tasaIsv || 15;
       const base = item.precio * item.cantidad;
-      const isvItem = base - base / (1 + tasa / 100);
-      importeGravado += base / (1 + tasa / 100);
+      const isvItem = base * (tasa / 100);
+      importeGravado += base;
       if (tasa === 18) isv18 += isvItem;
       else isv15 += isvItem;
     });
   }
-  const importeExento = facExonerado ? afterDisc : 0;
-  const recibido = facFormaPago==='efectivo' ? (parseFloat(document.getElementById('fac-monto-recibido')?.value)||afterDisc) : afterDisc;
-  const cambio = facFormaPago==='efectivo' ? Math.max(0, recibido - afterDisc) : 0;
+  const totalConIsv = baseNetaConDesc + isv15 + isv18;
+  const importeExento = facExonerado ? baseNetaConDesc : 0;
+  const recibido = facFormaPago==='efectivo' ? (parseFloat(document.getElementById('fac-monto-recibido')?.value)||totalConIsv) : totalConIsv;
+  const cambio = facFormaPago==='efectivo' ? Math.max(0, recibido - totalConIsv) : 0;
   const fac_banco_id = (facFormaPago==='transferencia'||facFormaPago==='tarjeta') ? (document.getElementById('fac-banco-sel')?.value||null) : null;
   if ((facFormaPago==='transferencia'||facFormaPago==='tarjeta') && !fac_banco_id) { alert('⚠️ Debe seleccionar un banco para el pago.'); return; }
 
@@ -2505,10 +2503,10 @@ async function processFacInvoice() {
     const facSerieId = (document.getElementById('fac-serie-id')?.value) || null;
     const r = await POST('/ventas', {
       cliente_id: cl.id,
-      items: facCart.map(i => ({ id: i.id, codigo: i.codigo, nombre: i.nombre, categoria: i.categoria, precio: i.precio, cantidad: i.cantidad })),
+      items: facCart.map(i => ({ id: i.id, codigo: i.codigo, nombre: i.nombre, categoria: i.categoria, precio: i.precio, cantidad: i.cantidad, gravado: i.gravado, tasaIsv: i.tasaIsv })),
       subtotal, descuento: discAmt,
       importe_gravado: importeGravado, importe_exento: importeExento, importe_exonerado: 0,
-      isv15, isv18, total: afterDisc, exonerado: facExonerado,
+      isv15, isv18, total: totalConIsv, exonerado: facExonerado,
       forma_pago: facFormaPago, monto_recibido: recibido, cambio, banco_id: fac_banco_id,
       orden_compra_exenta: facOrdenCompra, constancia_registro: facConstancia, identificativo_sag: facSAG,
       turno_id: turnoActivoCajero?.id || null, serie_id: facSerieId,
@@ -2525,7 +2523,7 @@ async function processFacInvoice() {
       id: r.id, numero_factura: r.numero_factura, fecha: nowHN(),
       cliente: cl, items: facCart.map(i=>({...i})),
       subtotal, descuento: discAmt, importeGravado, importeExento,
-      isv: isv15, isv18, total: afterDisc, exonerado: facExonerado,
+      isv: isv15, isv18, total: totalConIsv, exonerado: facExonerado,
       formaPago: facFormaPago, montoRecibido: recibido, cambio,
       ordenCompraExenta: facOrdenCompra, constanciaRegistro: facConstancia, identificativoSAG: facSAG,
       // Datos aduaneros — se capturan ANTES del reset de variables
@@ -2738,11 +2736,11 @@ function ndRenderCart() {
       </div>
     </div>`).join('');
 
-  // Calcular totales (misma lógica que facturación)
+  // Calcular totales (ISV se SUMA sobre el precio base, no se extrae hacia atrás)
   const subtotal = ndCart.reduce((s, i) => s + i.precio * i.cantidad, 0);
   let discAmt = ndDiscountType === 'porcentaje' ? subtotal * ndDiscount / 100 : ndDiscount;
   discAmt = Math.min(discAmt, subtotal);
-  const afterDisc = subtotal - discAmt;
+  const baseNetaConDesc = subtotal - discAmt;
 
   let isv15 = 0, isv18 = 0, rowsHTML = '';
   if (!ndExonerado) {
@@ -2750,17 +2748,18 @@ function ndRenderCart() {
       if (!item.gravado) return;
       const tasa = item.tasaIsv || 15;
       const base = item.precio * item.cantidad;
-      const isvItem = base - base / (1 + tasa / 100);
+      const isvItem = base * (tasa / 100);
       if (tasa === 18) isv18 += isvItem;
       else isv15 += isvItem;
     });
   }
+  const totalConIsv = baseNetaConDesc + isv15 + isv18;
 
   rowsHTML += `<div class="total-row-item"><span>Subtotal</span><span>L. ${subtotal.toFixed(2)}</span></div>`;
   if (discAmt > 0) rowsHTML += `<div class="total-row-item"><span>Descuento</span><span>-L. ${discAmt.toFixed(2)}</span></div>`;
   if (!ndExonerado && isv15 > 0) rowsHTML += `<div class="total-row-item"><span>ISV 15%</span><span>L. ${isv15.toFixed(2)}</span></div>`;
   if (!ndExonerado && isv18 > 0) rowsHTML += `<div class="total-row-item"><span>ISV 18%</span><span>L. ${isv18.toFixed(2)}</span></div>`;
-  rowsHTML += `<div class="total-row-item total-final"><span>TOTAL</span><span>L. ${afterDisc.toFixed(2)}</span></div>`;
+  rowsHTML += `<div class="total-row-item total-final"><span>TOTAL</span><span>L. ${totalConIsv.toFixed(2)}</span></div>`;
 
   // Forma de pago
   rowsHTML += `
@@ -2774,8 +2773,8 @@ function ndRenderCart() {
     </div>`;
 
   if (ndFormaPago === 'efectivo') {
-    rowsHTML += `<input type="number" id="nd-monto-recibido" placeholder="Monto recibido" value="${ndMontoRecibido||''}" oninput="ndCalcCambio(${afterDisc})" style="width:100%;border:1px solid #e2e8f0;border-radius:6px;padding:6px 10px;font-size:12px;outline:none;box-sizing:border-box;margin-bottom:4px">`;
-    const cambio = Math.max(0, (ndMontoRecibido||afterDisc) - afterDisc);
+    rowsHTML += `<input type="number" id="nd-monto-recibido" placeholder="Monto recibido" value="${ndMontoRecibido||''}" oninput="ndCalcCambio(${totalConIsv})" style="width:100%;border:1px solid #e2e8f0;border-radius:6px;padding:6px 10px;font-size:12px;outline:none;box-sizing:border-box;margin-bottom:4px">`;
+    const cambio = Math.max(0, (ndMontoRecibido||totalConIsv) - totalConIsv);
     if (cambio > 0) rowsHTML += `<div class="total-row-item" style="color:#059669"><span>Cambio</span><span>L. ${cambio.toFixed(2)}</span></div>`;
   }
   if (ndFormaPago === 'transferencia' || ndFormaPago === 'tarjeta') {
@@ -2813,23 +2812,25 @@ async function processNdInvoice() {
   const subtotal = ndCart.reduce((s, i) => s + i.precio * i.cantidad, 0);
   let discAmt = ndDiscountType === 'porcentaje' ? subtotal * ndDiscount / 100 : ndDiscount;
   discAmt = Math.min(discAmt, subtotal);
-  const afterDisc = subtotal - discAmt;
+  const baseNetaConDesc = subtotal - discAmt;
 
+  // El ISV se suma SOBRE el precio_venta (base neta) — no se extrae de un precio "todo incluido"
   let isv15 = 0, isv18 = 0, importeGravado = 0;
   if (!ndExonerado) {
     ndCart.forEach(item => {
       if (!item.gravado) return;
       const tasa = item.tasaIsv || 15;
       const base = item.precio * item.cantidad;
-      const isvItem = base - base / (1 + tasa / 100);
-      importeGravado += base / (1 + tasa / 100);
+      const isvItem = base * (tasa / 100);
+      importeGravado += base;
       if (tasa === 18) isv18 += isvItem;
       else isv15 += isvItem;
     });
   }
-  const importeExento = ndExonerado ? afterDisc : 0;
-  const recibido = ndFormaPago === 'efectivo' ? (parseFloat(document.getElementById('nd-monto-recibido')?.value)||afterDisc) : afterDisc;
-  const cambio = ndFormaPago === 'efectivo' ? Math.max(0, recibido - afterDisc) : 0;
+  const totalConIsv = baseNetaConDesc + isv15 + isv18;
+  const importeExento = ndExonerado ? baseNetaConDesc : 0;
+  const recibido = ndFormaPago === 'efectivo' ? (parseFloat(document.getElementById('nd-monto-recibido')?.value)||totalConIsv) : totalConIsv;
+  const cambio = ndFormaPago === 'efectivo' ? Math.max(0, recibido - totalConIsv) : 0;
   const nd_banco_id = (ndFormaPago==='transferencia'||ndFormaPago==='tarjeta') ? (document.getElementById('nd-banco-sel')?.value||null) : null;
   if ((ndFormaPago==='transferencia'||ndFormaPago==='tarjeta') && !nd_banco_id) { alert('⚠️ Debe seleccionar un banco.'); return; }
 
@@ -2837,10 +2838,10 @@ async function processNdInvoice() {
     const ndSerieId = document.getElementById('nd-serie-id')?.value || null;
     const r = await POST('/ventas', {
       cliente_id: cl.id,
-      items: ndCart.map(i => ({ id:i.id, codigo:i.codigo, nombre:i.nombre, categoria:i.categoria, precio:i.precio, cantidad:i.cantidad })),
+      items: ndCart.map(i => ({ id:i.id, codigo:i.codigo, nombre:i.nombre, categoria:i.categoria, precio:i.precio, cantidad:i.cantidad, gravado:i.gravado, tasaIsv:i.tasaIsv })),
       subtotal, descuento: discAmt,
       importe_gravado: importeGravado, importe_exento: importeExento, importe_exonerado: 0,
-      isv15, isv18, total: afterDisc, exonerado: ndExonerado,
+      isv15, isv18, total: totalConIsv, exonerado: ndExonerado,
       forma_pago: ndFormaPago, monto_recibido: recibido, cambio, banco_id: nd_banco_id,
       orden_compra_exenta: ndOrdenCompra, constancia_registro: ndConstancia, identificativo_sag: ndSAG,
       turno_id: turnoActivoCajero?.id || null, serie_id: ndSerieId
@@ -2852,7 +2853,7 @@ async function processNdInvoice() {
       id: r.id, numero_factura: r.numero_factura, fecha: nowHN(),
       cliente: cl, items: ndCart.map(i=>({...i})),
       subtotal, descuento: discAmt, importeGravado, importeExento,
-      isv: isv15, isv18, total: afterDisc, exonerado: ndExonerado,
+      isv: isv15, isv18, total: totalConIsv, exonerado: ndExonerado,
       formaPago: ndFormaPago, montoRecibido: recibido, cambio,
       ordenCompraExenta: ndOrdenCompra, constanciaRegistro: ndConstancia, identificativoSAG: ndSAG,
       // CAI/rango propios de la serie de Nota de Débito seleccionada
@@ -2887,7 +2888,8 @@ function printNotaDebito(sale) {
   let importeExentoCalc = 0;
   const itemsHTML = sale.items.map(i => {
     const esGravado = !(i.gravado === 0 || i.gravado === false);
-    const isv_pct   = esGravado ? '15.00%' : '0.00%';
+    const tasaReal  = i.tasaIsv || 15;
+    const isv_pct   = esGravado ? tasaReal.toFixed(2)+'%' : '0.00%';
     const totalItem = (i.precio||0) * (i.cantidad||1);
     if (!esGravado) importeExentoCalc += totalItem;
     return `<tr>
@@ -5617,6 +5619,37 @@ async function renderWhatsApp() {
           style="font-size:11px;color:#2563eb;text-decoration:underline">📖 Ver TextMeBot — desde $1/mes →</a>
       </div>
 
+      <!-- ═══════════════════ RESUMEN SEMANAL — CallMeBot (gratis) ═══════════════════ -->
+      <div style="background:#fff;border:2px solid #16a34a;border-radius:14px;padding:18px;margin-bottom:24px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+          <div>
+            <div style="font-size:15px;font-weight:800;color:#15803d">🆓 Resumen Semanal — CallMeBot (100% Gratis)</div>
+            <div style="font-size:12px;color:#64748b;margin-top:2px">Cada Lunes 8:00am se envía el total de Facturas, Notas de Débito y Órdenes de Compra de la semana</div>
+          </div>
+          <button class="btn-primary" style="background:#16a34a;flex-shrink:0" onclick="abrirModalResumenDest()">+ Agregar Número</button>
+        </div>
+
+        <!-- Instrucciones CallMeBot -->
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 16px;margin-bottom:14px">
+          <div style="font-size:12px;font-weight:700;color:#15803d;margin-bottom:6px">📲 ¿Cómo obtener tu API Key gratis de CallMeBot?</div>
+          <div style="font-size:11.5px;color:#166534;line-height:1.7">
+            1. Agregá este número a tus contactos: <b>+34 684 72 39 62</b><br>
+            2. Desde tu WhatsApp, enviale el mensaje: <code style="background:#dcfce7;padding:1px 5px;border-radius:4px">I allow callmebot to send me messages</code><br>
+            3. El bot te va a responder con tu <b>API Key</b> (puede tardar hasta 2 minutos)<br>
+            4. Pegá ese número y esa API Key aquí abajo con "+ Agregar Número"
+          </div>
+        </div>
+
+        <div id="resumen-dest-lista" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px"></div>
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button onclick="verPreviewResumen()" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer">👁️ Vista Previa del Mensaje</button>
+          <button onclick="enviarResumenAhora()" style="background:#16a34a;color:#fff;border:none;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer">📤 Enviar Ahora</button>
+        </div>
+
+        <div id="resumen-log-cont" style="margin-top:14px"></div>
+      </div>
+
       ${lista.length === 0 ? `
         <div style="text-align:center;padding:40px;color:#94a3b8">No hay números configurados aún</div>
       ` : `
@@ -5708,7 +5741,39 @@ async function renderWhatsApp() {
           </div>
         </div>
       </div>
+
+      <!-- Modal agregar destinatario CallMeBot (Resumen Semanal) -->
+      <div id="resumen-dest-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center">
+        <div style="background:#fff;border-radius:14px;padding:24px;width:90%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,.2)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
+            <h3 style="margin:0;color:#15803d">🆓 Destinatario CallMeBot</h3>
+            <button onclick="document.getElementById('resumen-dest-modal').style.display='none'"
+              style="background:none;border:none;font-size:20px;cursor:pointer;color:#94a3b8">✕</button>
+          </div>
+          <div class="form-field" style="margin-bottom:14px">
+            <label>Nombre / Descripción *</label>
+            <input type="text" id="rd-nombre" placeholder="Ej: Pedro - Gerente">
+          </div>
+          <div class="form-field" style="margin-bottom:14px">
+            <label>Número WhatsApp * (con código de país)</label>
+            <input type="text" id="rd-numero" placeholder="50498765432">
+            <small style="color:#94a3b8;font-size:11px">Sin +, sin guiones. Ej: 50498765432</small>
+          </div>
+          <div class="form-field" style="margin-bottom:6px">
+            <label>API Key de CallMeBot *</label>
+            <input type="text" id="rd-apikey" placeholder="Ej: 123123">
+            <small style="color:#94a3b8;font-size:11px">La recibís por WhatsApp al activar el bot (ver instrucciones arriba)</small>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:18px">
+            <button class="btn-cancel" style="flex:1" onclick="document.getElementById('resumen-dest-modal').style.display='none'">Cancelar</button>
+            <button class="btn-primary" style="flex:1;background:#16a34a" onclick="guardarResumenDest()">💾 Guardar</button>
+          </div>
+        </div>
+      </div>
     </div>`;
+
+  renderResumenDestLista();
+  renderResumenLog();
 }
 
 function abrirModalWhatsApp() {
@@ -5775,6 +5840,117 @@ async function eliminarWhatsApp(id) {
     showToastMsg('🗑️ Número eliminado');
     renderWhatsApp();
   } catch(e) { alert(e.message); }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  RESUMEN SEMANAL — CallMeBot (gratuito)
+// ══════════════════════════════════════════════════════════════════════════
+let resumenDestCache = [];
+
+async function renderResumenDestLista() {
+  const cont = document.getElementById('resumen-dest-lista');
+  if (!cont) return;
+  try {
+    resumenDestCache = await GET('/resumen-semanal/destinatarios');
+  } catch(e) { resumenDestCache = []; }
+
+  if (resumenDestCache.length === 0) {
+    cont.innerHTML = `<div style="text-align:center;padding:20px;color:#94a3b8;font-size:13px;background:#f8fafc;border-radius:8px">Sin destinatarios configurados. Agregá al menos uno para activar el envío.</div>`;
+    return;
+  }
+
+  cont.innerHTML = resumenDestCache.map(d => `
+    <div style="display:flex;align-items:center;gap:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px">
+      <div style="width:36px;height:36px;background:${d.activo?'#dcfce7':'#f1f5f9'};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">
+        ${d.activo ? '✅' : '⏸️'}
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;color:#1e293b;font-size:13px">${d.nombre}</div>
+        <div style="font-size:11px;color:#64748b;font-family:monospace">${d.numero}</div>
+      </div>
+      <button onclick="toggleResumenDest('${d.id}',${d.activo?0:1})"
+        style="background:${d.activo?'#fef3c7':'#dcfce7'};color:${d.activo?'#92400e':'#15803d'};border:none;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">
+        ${d.activo?'⏸️ Pausar':'▶️ Activar'}
+      </button>
+      <button onclick="eliminarResumenDest('${d.id}')"
+        style="background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:6px;padding:5px 9px;font-size:12px;font-weight:700;cursor:pointer">🗑️</button>
+    </div>`).join('');
+}
+
+function abrirModalResumenDest() {
+  document.getElementById('rd-nombre').value = '';
+  document.getElementById('rd-numero').value = '';
+  document.getElementById('rd-apikey').value = '';
+  document.getElementById('resumen-dest-modal').style.display = 'flex';
+}
+
+async function guardarResumenDest() {
+  const nombre = document.getElementById('rd-nombre')?.value.trim();
+  const numero = document.getElementById('rd-numero')?.value.trim().replace(/[^0-9]/g,'');
+  const callmebot_apikey = document.getElementById('rd-apikey')?.value.trim();
+  if (!nombre || !numero || !callmebot_apikey) return alert('Todos los campos son requeridos.');
+  try {
+    await POST('/resumen-semanal/destinatarios', { nombre, numero, callmebot_apikey });
+    showToastMsg('✅ Destinatario agregado');
+    document.getElementById('resumen-dest-modal').style.display = 'none';
+    renderResumenDestLista();
+  } catch(e) { alert(e.message); }
+}
+
+async function toggleResumenDest(id, nuevoEstado) {
+  try {
+    await PUT('/resumen-semanal/destinatarios/'+id, { activo: nuevoEstado });
+    renderResumenDestLista();
+  } catch(e) { alert(e.message); }
+}
+
+async function eliminarResumenDest(id) {
+  if (!confirm('¿Eliminar este destinatario del resumen semanal?')) return;
+  try {
+    await DELETE('/resumen-semanal/destinatarios/'+id);
+    showToastMsg('🗑️ Destinatario eliminado');
+    renderResumenDestLista();
+  } catch(e) { alert(e.message); }
+}
+
+async function verPreviewResumen() {
+  try {
+    showToastMsg('Generando vista previa...');
+    const r = await GET('/resumen-semanal/preview');
+    alert(r.texto); // vista previa simple en alert — el mensaje real se ve igual en WhatsApp
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function enviarResumenAhora() {
+  if (!confirm('¿Enviar el resumen semanal ahora mismo a todos los destinatarios activos?')) return;
+  try {
+    showToastMsg('📤 Enviando resumen semanal...');
+    const r = await POST('/resumen-semanal/enviar-ahora', {});
+    if (r.ok) {
+      showToastMsg('✅ ' + r.mensaje);
+    } else {
+      alert(r.mensaje || 'No se pudo enviar.');
+    }
+    renderResumenLog();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function renderResumenLog() {
+  const cont = document.getElementById('resumen-log-cont');
+  if (!cont) return;
+  try {
+    const log = await GET('/resumen-semanal/log');
+    if (!log || log.length === 0) { cont.innerHTML = ''; return; }
+    cont.innerHTML = `
+      <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Últimos envíos</div>
+      <div style="display:flex;flex-direction:column;gap:4px;max-height:160px;overflow-y:auto">
+        ${log.slice(0,10).map(l => `
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:#64748b;padding:4px 8px;background:#f8fafc;border-radius:6px">
+            <span>${l.ok ? '✅' : '❌'} ${l.enviado_a} <span style="color:#94a3b8">(${l.tipo})</span></span>
+            <span>${fDT(l.fecha)}</span>
+          </div>`).join('')}
+      </div>`;
+  } catch(e) { cont.innerHTML = ''; }
 }
 
 // ── Descargar Productos como Excel (.xlsx) ──────────────────────────────────────

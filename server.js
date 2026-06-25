@@ -796,9 +796,14 @@ function _recalcularTotalesVenta(ventaId) {
   let importeGravado=0, importeExento=0, isv15=0, isv18=0;
   todosItems.forEach(i => {
     const base = (i.precio_unit||0) * (i.cantidad||0);
-    const esGravado = i.gravado !== 0 && i.gravado !== null && i.gravado !== undefined ? i.gravado : 1;
+    // Comparación robusta: convierte a número antes de comparar, ya que sql.js
+    // puede devolver el valor de la columna como string ("0"/"1") en vez de
+    // number, y "0" !== 0 es true en JS — eso causaba que ítems exentos (gravado=0)
+    // se siguieran sumando como gravados.
+    const gravadoNum = parseInt(i.gravado, 10);
+    const esGravado = isNaN(gravadoNum) ? true : gravadoNum !== 0;
     if (esGravado) {
-      const tasa = i.tasa_isv || 15;
+      const tasa = parseFloat(i.tasa_isv) || 15;
       importeGravado += base;
       const isvItem = base * (tasa/100);
       if (tasa === 18) isv18 += isvItem; else isv15 += isvItem;

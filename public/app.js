@@ -1919,7 +1919,11 @@ function printCarta(sale) {
   // Calcular importeExento real = suma de ítems NO gravados (ISV 0%)
   let importeExentoCalc = 0;
   const itemsHTML = sale.items.map(i => {
-    const esGravado = !(i.gravado === 0 || i.gravado === false);
+    // Comparación robusta ante strings ('0'/'1') vs números (0/1) que pueden
+    // venir desde la base de datos — "0" === 0 es false en JS, lo que antes
+    // causaba que ítems exentos se imprimieran como gravados.
+    const gravadoNum = parseInt(i.gravado, 10);
+    const esGravado = isNaN(gravadoNum) ? !(i.gravado===false) : gravadoNum !== 0;
     const tasaReal  = i.tasaIsv || 15;
     const isv_pct   = esGravado ? tasaReal.toFixed(2)+'%' : '0.00%';
     const totalItem = (i.precio||0) * (i.cantidad||1);
@@ -2887,7 +2891,9 @@ function printNotaDebito(sale) {
 
   let importeExentoCalc = 0;
   const itemsHTML = sale.items.map(i => {
-    const esGravado = !(i.gravado === 0 || i.gravado === false);
+    // Comparación robusta ante strings ('0'/'1') vs números (0/1)
+    const gravadoNum = parseInt(i.gravado, 10);
+    const esGravado = isNaN(gravadoNum) ? !(i.gravado===false) : gravadoNum !== 0;
     const tasaReal  = i.tasaIsv || 15;
     const isv_pct   = esGravado ? tasaReal.toFixed(2)+'%' : '0.00%';
     const totalItem = (i.precio||0) * (i.cantidad||1);
@@ -4122,12 +4128,17 @@ function abrirCorregirItems(v) {
   ciVentaActual = v;
   // Necesitamos el id real de cada fila de venta_items (no viene en buscar_reimpresion
   // por defecto en algunos casos), así que lo recuperamos del propio array de items.
-  ciItemsEditables = (v.items||[]).map(i => ({
-    id: i.id, // puede venir undefined si el backend no lo incluyó — se valida al guardar
-    nombre: i.nombre, precio: i.precio, cantidad: i.cantidad,
-    gravado: i.gravado !== 0 && i.gravado !== false,
-    tasaIsv: i.tasaIsv || 15
-  }));
+  ciItemsEditables = (v.items||[]).map(i => {
+    // Comparación robusta ante strings ('0'/'1') vs números (0/1)
+    const gravadoNum = parseInt(i.gravado, 10);
+    const esGravado = isNaN(gravadoNum) ? !(i.gravado===false) : gravadoNum !== 0;
+    return {
+      id: i.id, // puede venir undefined si el backend no lo incluyó — se valida al guardar
+      nombre: i.nombre, precio: i.precio, cantidad: i.cantidad,
+      gravado: esGravado,
+      tasaIsv: i.tasaIsv || 15
+    };
+  });
   document.getElementById('ci-numero-factura').textContent = v.numero_factura;
   renderCorregirItemsLista();
   openModal('corregir-items-modal');

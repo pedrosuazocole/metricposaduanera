@@ -111,6 +111,26 @@ app.get('/health', (req, res) => {
   }
 });
 
+// ── DIAGNÓSTICO TEMPORAL: ver venta_items crudos de una factura por número ────
+app.get('/api/debug/venta_items', auth(), (req, res) => {
+  const { numero } = req.query;
+  if (!numero) return res.status(400).json({error:'Falta parámetro numero'});
+  const venta = get(`SELECT * FROM ventas WHERE numero_factura=? AND sucursal_id=?`,[numero, req.user.sucursal_id]);
+  if (!venta) return res.status(404).json({error:'Venta no encontrada'});
+  const items = all(`SELECT * FROM venta_items WHERE venta_id=?`,[venta.id]);
+  res.json({
+    venta_id: venta.id,
+    venta_total: venta.total,
+    venta_importe_gravado: venta.importe_gravado,
+    venta_importe_exento: venta.importe_exento,
+    items_crudos: items.map(i => ({
+      id: i.id, nombre: i.producto_nombre,
+      gravado_valor: i.gravado, gravado_tipo: typeof i.gravado,
+      tasa_isv_valor: i.tasa_isv, tasa_isv_tipo: typeof i.tasa_isv
+    }))
+  });
+});
+
 // ── RESET EMERGENCIA (solo si la DB no tiene sucursales) ──────────────────────
 // Visitar: /api/reset-db?confirm=RESETEAR para forzar recreación de sucursal+admin
 app.get('/api/reset-db', (req, res) => {

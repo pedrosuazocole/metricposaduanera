@@ -747,6 +747,43 @@ app.get('/api/ventas',auth(),(req,res)=>{
 });
 app.get('/api/ventas/:id/items',auth(),(req,res)=>res.json(all(`SELECT * FROM venta_items WHERE venta_id=?`,[req.params.id])));
 
+// ── CORRECCIÓN RETROACTIVA DE ÍTEMS (admin/supervisor) ───────────────────────
+// Permite corregir el estado de exención (gravado) de un ítem de una venta YA
+// EMITIDA, sin anularla ni cambiar su número de factura. Recalcula automática-
+// mente importe_gravado, importe_exento, isv15, isv18 y total de la venta.
+app.put('/api/ventas/:ventaId/items/:itemId/gravado', auth(['admin','supervisor']), (req,res) => {
+  const { gravado, tasa_isv } = req.body;
+  const venta = get(`SELECT * FROM ventas WHERE id=? AND sucursal_id=?`,[req.params.ventaId, req.user.sucursal_id]);
+  if (!venta) return res.status(404).json({error:'Venta no encontrada'});
+  const item = get(`SELECT * FROM venta_items WHERE id=? AND venta_id=?`,[req.params.itemId, req.params.ventaId]);
+  if (!item) return res.status(404).json({error:'Ítem no encontrado en esta venta'});
+
+  run(`UPDATE venta_items SET gravado=?, tasa_isv=? WHERE id=?`,
+    [gravado?1:0, tasa_isv||item.tasa_isv||15, req.params.itemId]);
+
+  // Recalcular los totales de la venta completa a partir de TODOS sus ítems actualizados
+  const todosItems = all(`SELECT * FROM venta_items WHERE venta_id=?`,[req.params.ventaId]);
+  let importeGravado=0, importeExento=0, isv15=0, isv18=0;
+  todosItems.forEach(i => {
+    const base = (i.precio_unit||0) * (i.cantidad||0);
+    const esGravado = i.gravado !== 0 && i.gravado !== null && i.gravado !== undefined ? i.gravado : 1;
+    if (esGravado) {
+      const tasa = i.tasa_isv || 15;
+      importeGravado += base;
+      const isvItem = base * (tasa/100);
+      if (tasa === 18) isv18 += isvItem; else isv15 += isvItem;
+    } else {
+      importeExento += base;
+    }
+  });
+  const nuevoTotal = importeGravado + importeExento + isv15 + isv18 - (venta.descuento||0);
+
+  run(`UPDATE ventas SET importe_gravado=?, importe_exento=?, isv15=?, isv18=?, total=? WHERE id=?`,
+    [importeGravado, importeExento, isv15, isv18, nuevoTotal, req.params.ventaId]);
+  saveDB();
+  res.json({ ok:true, importeGravado, importeExento, isv15, isv18, total: nuevoTotal });
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 //  ÓRDENES DE COMPRA — documento administrativo interno (sin ISV/CAI/SAR)
 // ══════════════════════════════════════════════════════════════════════════
@@ -891,7 +928,7 @@ app.get('/api/ventas/buscar_reimpresion',auth(),(req,res)=>{
       ...v,
       cliente: { nombre: v.cliente_nombre||'Consumidor Final', rtn: v.cliente_rtn||'' },
       items: items.map(i => ({
-        codigo: i.producto_codigo, nombre: i.producto_nombre, categoria: i.producto_categoria,
+        id: i.id, codigo: i.producto_codigo, nombre: i.producto_nombre, categoria: i.producto_categoria,
         cantidad: i.cantidad, precio: i.precio_unit,
         // Gravado real del ítem (columna agregada — ventas anteriores a este cambio
         // no la tienen y caerán al valor DEFAULT 1, que es el comportamiento previo)

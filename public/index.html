@@ -1160,6 +1160,22 @@
   </div>
 </div>
 
+<!-- MODAL CORREGIR ÍTEMS DE VENTA YA EMITIDA -->
+<div class="modal-overlay" id="corregir-items-modal">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-title">✏️ Corregir Ítems — <span id="ci-numero-factura" style="font-family:monospace"></span></div>
+    <div style="font-size:13px;color:#64748b;margin-bottom:14px">
+      Marcá cada artículo como <b>Gravado</b> o <b>Exento</b> según corresponda. Los totales de la factura se recalculan automáticamente al guardar — el número de factura no cambia.
+    </div>
+    <div id="ci-items-lista" style="display:flex;flex-direction:column;gap:8px;max-height:380px;overflow-y:auto;margin-bottom:14px"></div>
+    <div id="ci-totales-preview" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px"></div>
+    <div style="display:flex;gap:8px">
+      <button onclick="closeModal('corregir-items-modal')" class="btn-cancel" style="flex:1">Cancelar</button>
+      <button onclick="guardarCorreccionItems()" class="btn-confirm" style="flex:1;background:#16a34a">💾 Guardar Corrección</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL ORDEN DE COMPRA -->
 <div class="modal-overlay" id="oc-modal">
   <div class="modal" style="max-width:760px;max-height:92vh;overflow-y:auto">

@@ -4055,13 +4055,17 @@ async function buscarReimpresion() {
     const colorAccent = reimpresionTipoActual === 'nota_debito' ? '#7c3aed' : '#2563eb';
     cont.innerHTML = `<div style="font-size:11px;color:#94a3b8;margin-bottom:8px">${resultados.length} documento(s) encontrado(s)</div>` +
       resultados.map(v => `
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:8px;background:#fff">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:8px;background:#fff;gap:8px">
         <div>
           <div style="font-family:monospace;font-weight:700;color:${colorAccent};font-size:13px">${v.numero_factura}</div>
           <div style="font-size:12px;color:#475569;margin-top:2px">${v.cliente.nombre} ${v.cliente.rtn?'· RTN '+v.cliente.rtn:''}</div>
           <div style="font-size:11px;color:#94a3b8;margin-top:1px">${new Date(v.fecha).toLocaleDateString('es-HN')} · Total: L. ${(v.total||0).toFixed(2)}</div>
         </div>
-        <button class="btn-primary" style="background:${colorAccent};white-space:nowrap" onclick='reimprimirVenta(${JSON.stringify(v).replace(/'/g,"&apos;")})'>🖨️ Reimprimir</button>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button onclick='abrirCorregirItems(${JSON.stringify(v).replace(/'/g,"&apos;")})'
+            style="background:#fffbeb;color:#92400e;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">✏️ Corregir Ítems</button>
+          <button class="btn-primary" style="background:${colorAccent};white-space:nowrap" onclick='reimprimirVenta(${JSON.stringify(v).replace(/'/g,"&apos;")})'>🖨️ Reimprimir</button>
+        </div>
       </div>`).join('');
   } catch(e) {
     cont.innerHTML = `<div style="color:#dc2626;font-size:13px;padding:10px">Error al buscar: ${e.message}</div>`;
@@ -4076,7 +4080,7 @@ function reimprimirVenta(v) {
     cliente: v.cliente,
     items: (v.items||[]).map(i => ({
       codigo: i.codigo, nombre: i.nombre, categoria: i.categoria,
-      cantidad: i.cantidad, precio: i.precio, gravado: i.gravado
+      cantidad: i.cantidad, precio: i.precio, gravado: i.gravado, tasaIsv: i.tasaIsv
     })),
     importeGravado: v.importe_gravado||0,
     isv: v.isv15||0, isv18: v.isv18||0,
@@ -4096,6 +4100,94 @@ function reimprimirVenta(v) {
     printNotaDebito(sale);
   } else {
     printCarta(sale);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CORRECCIÓN RETROACTIVA DE ÍTEMS — para facturas/ND ya emitidas
+// ═══════════════════════════════════════════════════════════════════════════
+let ciVentaActual = null; // venta completa abierta en el modal de corrección
+let ciItemsEditables = []; // copia local editable de los ítems mientras se corrige
+
+function abrirCorregirItems(v) {
+  ciVentaActual = v;
+  // Necesitamos el id real de cada fila de venta_items (no viene en buscar_reimpresion
+  // por defecto en algunos casos), así que lo recuperamos del propio array de items.
+  ciItemsEditables = (v.items||[]).map(i => ({
+    id: i.id, // puede venir undefined si el backend no lo incluyó — se valida al guardar
+    nombre: i.nombre, precio: i.precio, cantidad: i.cantidad,
+    gravado: i.gravado !== 0 && i.gravado !== false,
+    tasaIsv: i.tasaIsv || 15
+  }));
+  document.getElementById('ci-numero-factura').textContent = v.numero_factura;
+  renderCorregirItemsLista();
+  openModal('corregir-items-modal');
+}
+
+function renderCorregirItemsLista() {
+  const cont = document.getElementById('ci-items-lista');
+  if (!cont) return;
+  cont.innerHTML = ciItemsEditables.map((i, idx) => `
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#fff">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;color:#1e293b">${i.nombre}</div>
+        <div style="font-size:11px;color:#94a3b8">Cant: ${i.cantidad} · L. ${(i.precio||0).toFixed(2)} c/u</div>
+      </div>
+      <div style="display:flex;gap:4px;flex-shrink:0">
+        <button onclick="toggleCorreccionItem(${idx}, false)"
+          style="padding:6px 12px;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;border:2px solid ${!i.gravado?'#16a34a':'#e2e8f0'};background:${!i.gravado?'#dcfce7':'#fff'};color:${!i.gravado?'#15803d':'#94a3b8'}">Exento</button>
+        <button onclick="toggleCorreccionItem(${idx}, true)"
+          style="padding:6px 12px;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;border:2px solid ${i.gravado?'#2563eb':'#e2e8f0'};background:${i.gravado?'#eff6ff':'#fff'};color:${i.gravado?'#1d4ed8':'#94a3b8'}">Gravado ${i.tasaIsv}%</button>
+      </div>
+    </div>`).join('');
+  recalcularPreviewCorreccion();
+}
+
+function toggleCorreccionItem(idx, esGravado) {
+  ciItemsEditables[idx].gravado = esGravado;
+  renderCorregirItemsLista();
+}
+
+function recalcularPreviewCorreccion() {
+  const cont = document.getElementById('ci-totales-preview');
+  if (!cont) return;
+  let importeGravado=0, importeExento=0, isv15=0, isv18=0;
+  ciItemsEditables.forEach(i => {
+    const base = (i.precio||0)*(i.cantidad||0);
+    if (i.gravado) {
+      importeGravado += base;
+      const isvItem = base*(i.tasaIsv/100);
+      if (i.tasaIsv === 18) isv18 += isvItem; else isv15 += isvItem;
+    } else {
+      importeExento += base;
+    }
+  });
+  const descuento = ciVentaActual?.descuento || 0;
+  const total = importeGravado + importeExento + isv15 + isv18 - descuento;
+  cont.innerHTML = `
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>Importe Exento</span><b>L. ${importeExento.toFixed(2)}</b></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>Importe Gravado</span><b>L. ${importeGravado.toFixed(2)}</b></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>ISV 15%</span><b>L. ${isv15.toFixed(2)}</b></div>
+    ${isv18>0?`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>ISV 18%</span><b>L. ${isv18.toFixed(2)}</b></div>`:''}
+    <div style="display:flex;justify-content:space-between;border-top:1px solid #e2e8f0;padding-top:6px;margin-top:4px;font-size:15px;color:#1e3a5f"><span><b>Total a Pagar</b></span><b>L. ${total.toFixed(2)}</b></div>`;
+}
+
+async function guardarCorreccionItems() {
+  if (!ciVentaActual) return;
+  const sinId = ciItemsEditables.filter(i => !i.id);
+  if (sinId.length > 0) {
+    alert('⚠️ No se pudo identificar uno o más ítems para corregir (falta su ID interno). Contactá soporte si esto persiste.');
+    return;
+  }
+  try {
+    for (const i of ciItemsEditables) {
+      await PUT(`/ventas/${ciVentaActual.id}/items/${i.id}/gravado`, { gravado: i.gravado, tasa_isv: i.tasaIsv });
+    }
+    showToastMsg('✅ Factura corregida correctamente');
+    closeModal('corregir-items-modal');
+    buscarReimpresion(); // refrescar la lista con los nuevos totales
+  } catch(e) {
+    alert('Error al guardar la corrección: ' + e.message);
   }
 }
 
